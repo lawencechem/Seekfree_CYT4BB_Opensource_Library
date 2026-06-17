@@ -141,7 +141,9 @@ volatile uint32_t sys_time_ms = 0; // 【定高调试】全局毫秒级时间戳
                 (void)follow_latched;
 #elif FOLLOW_STEP == 4
                 // 第4步：真实摄像头定点/跟车。
-                if (cam_valid && current_height_cm >= CAM_ENGAGE_HEIGHT_CM)
+                // 爬升中(Vz>12)禁止位置环：俯仰倾斜会让摄像头看到假偏移→正反馈飞走
+                if (cam_valid && current_height_cm >= CAM_ENGAGE_HEIGHT_CM
+                    && fabsf(current_speed_z) < UPF_CLIMB_VZ_THRESHOLD)
                 {
                     Up_Flow_302_PosHold_Prime();
                     Cam_Follow_Outer_Update(dt);

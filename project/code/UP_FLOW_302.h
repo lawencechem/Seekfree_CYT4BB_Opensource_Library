@@ -248,7 +248,7 @@ void Cam_Vel_Mock_Reset(void);
  *
  * 【分离设计】数据源(A) 和 外环(B) 分开：接真相机时只换 A(改成读共享内存+IMU去旋转)，
  *            外环 B 完全不动。*/
-#define CAM_POS_KP        (1.0f)    /* 位置环纯P。1Hz摆锤振荡下I相位滞后→助振，任何环都不加I。 */
+#define CAM_POS_KP        (2.0f)    /* 1.0→2.0：收敛太慢，加速拉回 */
 #define V_FOLLOW_MAX      (18.0f)   /* 期望速度限幅(cm/s)。120cm 高线缆横向余量~90cm，限速+小幅度保证不拉直 */
 #define VCAR_MODE         (0)       /* 虚拟车运动：0=静止(阶跃测试，先飞这个)  1=正弦往返 */
 #define VCAR_STEP_X       (30.0f)   /* 静止模式：车固定在世界系 X=此值(cm)，飞机阶跃飞过去并停住(40→30 留线缆余量) */
@@ -274,7 +274,9 @@ extern uint32 cam_dbg_last_raw;
 #define CAM_TIMEOUT_MS       (300U)      /* 无新数据超时判丢目标 */
 #define CAM_FOCAL_PX         (117.0f)    /* ★焦距像素：2.8mm镜头/6µm像元/4倍下采样=117px */
 #define CAM_SWAP_UV          (0)         /* 0:前后←v、左右←u ; 1:互换 */
-#define CAM_FWD_SIGN         (1.0f)      /* 前后符号 */
+#define CAM_FWD_SIGN         (-1.0f)     /* +1→-1：实际飞行验证camera锁到后位置环发散，cm_rel_x极性反了。
+                                          * 目标在前→px_v负→+1.0×负=负→命令向后飞→越飞越远。
+                                          * -1.0×负=正→命令向前飞→收敛。 */
 #define CAM_RIGHT_SIGN       (-1.0f)     /* 左右符号 */
 #define CAM_ENGAGE_HEIGHT_CM (40.0f)     /* 摄像头接管高度门限 50→40 */
 #define CAM_TARGET_HEIGHT_CM (30.0f)     /* 车灯板离地高度(cm) */

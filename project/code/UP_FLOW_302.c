@@ -798,9 +798,11 @@ void Cam_Follow_Outer_Update(float dt)
         return;
     }
 
-    /* 纯 P：相对位置(cm) → 期望速度(cm/s) */
-    float vx_des = CAM_POS_KP * cam_rel_x;
-    float vy_des = -CAM_POS_KP * cam_rel_y;
+    /* 轴映射：摄像头X→光流Y负、摄像头Y→光流X正（用户实测确认）
+     * vx_des(光流X/俯仰) = KP × cam_rel_y(摄像头Y正)
+     * vy_des(光流Y/横滚) = -KP × cam_rel_x(摄像头X正→光流Y负) */
+    float vx_des =  CAM_POS_KP * cam_rel_y;
+    float vy_des = -CAM_POS_KP * cam_rel_x;
     upf_target_vx = f_limit(vx_des, -V_FOLLOW_MAX, V_FOLLOW_MAX);
     upf_target_vy = f_limit(vy_des, -V_FOLLOW_MAX, V_FOLLOW_MAX);
 }
