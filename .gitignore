@@ -1,0 +1,22 @@
+# IAR build artifacts
+Debug/
+List/
+BrowseInfo/
+*.dep
+*.o
+*.obj
+*.out
+*.elf
+*.hex
+*.bin
+
+# IAR user settings (not portable)
+project/iar/settings/
+*.ewd.local
+*.ewp.local
+
+# Windows
+Thumbs.db
+
+# Claude Code per-user settings (not portable)
+.claude/settings.json
