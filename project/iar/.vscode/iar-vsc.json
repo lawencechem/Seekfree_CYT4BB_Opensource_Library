@@ -1,0 +1,16 @@
+{
+  "workspace": {
+    "path": "${workspaceFolder}\\cyt4bb7.eww"
+  },
+  "workspaces": {
+    "${workspaceFolder}\\cyt4bb7.eww": {
+      "configs": {
+        "${workspaceFolder}\\project_config\\cyt4bb7_cm_7_0.ewp": "Debug",
+        "${workspaceFolder}\\project_config\\cyt4bb7_cm_7_1.ewp": "Debug"
+      },
+      "selected": {
+        "path": "${workspaceFolder}\\project_config\\cyt4bb7_cm_7_0.ewp"
+      }
+    }
+  }
+}

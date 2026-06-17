@@ -20,3 +20,10 @@ Thumbs.db
 
 # Claude Code per-user settings (not portable)
 .claude/settings.json
+
+# IAR multi-core debug output (not covered by Debug/ pattern)
+Debug_m7_0/
+Debug_m7_1/
+
+# IAR generated debug probe scripts
+project/iar/project_config/settings/
