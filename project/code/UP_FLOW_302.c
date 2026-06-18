@@ -785,7 +785,7 @@ void Cam_Pos_Mock_Update(float dt)
 }
 
 /* (B) 跟随外环：相对坐标(误差) → 期望速度。
- * 注意：位置环和速度环都不加I。1Hz摆锤振荡下I相位滞后→助振。
+ * 纯P控制，不加I/D。~1Hz电源线摆动下I相位滞后→助振，D放大噪声。
  * @param dt 调用周期(秒)
  */
 void Cam_Follow_Outer_Update(float dt)

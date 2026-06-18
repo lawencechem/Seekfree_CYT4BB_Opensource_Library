@@ -51,7 +51,7 @@ extern float dbg_batt_delta;       // 电压补偿增加的油门量
 #define THR_MAX_OUTPUT     8300.0f  // 公共油门上限：保护姿态纠偏余量，非电机上限
 #define THR_MIN_OUTPUT     5200.0f  // 飞行中最低油门保守下探，避免高度环太硬
 
-#define CLIMB_UP_MAX_SPEED   12.0f // C1：20→12，爬升段 Vz 留在光流门限(30)内，全程有水平阻尼/位置环
+#define CLIMB_UP_MAX_SPEED   8.0f  // 12→8：爬慢点，到顶冲量小不易过头，定高更稳
 #define CLIMB_DOWN_MAX_SPEED -30.0f // 原来 -45，先降到 -30
 
 // 自动任务目标：悬停高度与保持时间
