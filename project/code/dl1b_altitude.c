@@ -38,7 +38,7 @@ static float takeoff_throttle = THR_MOTOR_START;
 void Altitude_System_Init(void)
 {
     // 位置环：高度差 → 期望速度，只要 P
-    pid_alt_pos.kp = 1.0f;   // 0.6→1.0：接近目标时强力减速，减少过头
+    pid_alt_pos.kp = 0.60f;  //0.55
     pid_alt_pos.ki = 0.0f;
     pid_alt_pos.kd = 0.0f;
     pid_alt_pos.out_limit = CLIMB_UP_MAX_SPEED;

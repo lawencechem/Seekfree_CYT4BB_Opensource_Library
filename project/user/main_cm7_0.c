@@ -141,25 +141,18 @@ volatile uint32_t sys_time_ms = 0; // 【定高调试】全局毫秒级时间戳
                 (void)follow_latched;
 #elif FOLLOW_STEP == 4
                 // 第4步：真实摄像头定点/跟车。
-                // 首次到达1m时一次性锁存摄像头位置环，之后永不关闭。
-                // 1m以下：光流+陀螺仪速度阻尼；1m以上摄像头介入。
-                // 锁存后高度再掉回1m以下位置环也不关，防反复切入切出。
+                // 爬升中(Vz>12)禁止位置环：俯仰倾斜会让摄像头看到假偏移→正反馈飞走
+                if (cam_valid && current_height_cm >= CAM_ENGAGE_HEIGHT_CM
+                    && fabsf(current_speed_z) < UPF_CLIMB_VZ_THRESHOLD)
                 {
-                    static uint8_t cam_latched = 0;
-                    if (!cam_latched && cam_valid && current_height_cm >= CAM_ENGAGE_HEIGHT_CM)
-                    {
-                        cam_latched = 1;
-                        Up_Flow_302_PosHold_Prime();
-                    }
-                    if (cam_latched || (cam_valid && current_height_cm >= CAM_ENGAGE_HEIGHT_CM))
-                    {
-                        Cam_Follow_Outer_Update(dt);
-                    }
-                    else
-                    {
-                        upf_target_vx = 0.0f;
-                        upf_target_vy = 0.0f;
-                    }
+                    Up_Flow_302_PosHold_Prime();
+                    Cam_Follow_Outer_Update(dt);
+                }
+                else
+                {
+                    // 光流只测速，不定点：目标速度归零
+                    upf_target_vx = 0.0f;
+                    upf_target_vy = 0.0f;
                 }
                 (void)follow_settle_s;
                 (void)follow_latched;

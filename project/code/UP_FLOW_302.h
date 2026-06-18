@@ -198,9 +198,10 @@
 #define UPF_ANGLE_LIMIT             (FLOW_MAX_ANGLE_DEG)      /* 修正角限幅（度） */
 #define UPF_INT_ERR_GATE_CMS        (120.0f)    /* 积分分离门限 */
 #define UPF_CLIMB_VZ_THRESHOLD      (12.0f)     /* Vz超过此值冻结I（爬升时光流有旋转残留） */
-#define UPF_I_FREEZE_UNTIL_CM       (30.0f)     /* 90→30：前漂是持续单向的，不是振荡。I解冻后能自动学掉偏置。
-                                                 * 30cm后速度环PI全开，P抗漂移、I消静差，
-                                                 * 同时不影响爬升段靠位置环回到原点。*/
+#define UPF_I_FREEZE_UNTIL_CM       (90.0f)     /* 40→90：回退。电源线是左右摆动的不确定力，不是恒力。
+                                                 * I项对变化的方向会相位滞后→越积越振。
+                                                 * 保持冻结到接近目标高度再开，爬升段靠P硬扛、
+                                                 * 到顶靠位置环(CAM_POS_KP)和速度环P稳。*/
 
 /* ==================== 阶段1：速度指令 mock + 跟随接口 ====================
  * 双核分工：视觉核检测小车出"相对坐标"，飞控核跟随往目标走。
@@ -248,7 +249,7 @@ void Cam_Vel_Mock_Reset(void);
  * 【分离设计】数据源(A) 和 外环(B) 分开：接真相机时只换 A(改成读共享内存+IMU去旋转)，
  *            外环 B 完全不动。*/
 #define CAM_POS_KP        (2.0f)    /* 1.0→2.0：收敛太慢，加速拉回 */
-#define V_FOLLOW_MAX      (18.0f)   /* 10→18：还原。期望速度限幅(cm/s)。120cm 高线缆横向余量~90cm，限速+小幅度保证不拉直 */
+#define V_FOLLOW_MAX      (18.0f)   /* 期望速度限幅(cm/s)。120cm 高线缆横向余量~90cm，限速+小幅度保证不拉直 */
 #define VCAR_MODE         (0)       /* 虚拟车运动：0=静止(阶跃测试，先飞这个)  1=正弦往返 */
 #define VCAR_STEP_X       (30.0f)   /* 静止模式：车固定在世界系 X=此值(cm)，飞机阶跃飞过去并停住(40→30 留线缆余量) */
 #define VCAR_SINE_AMP     (30.0f)   /* 正弦模式：幅度(cm)(50→30 留线缆余量) */
@@ -277,7 +278,7 @@ extern uint32 cam_dbg_last_raw;
                                           * 目标在前→px_v负→+1.0×负=负→命令向后飞→越飞越远。
                                           * -1.0×负=正→命令向前飞→收敛。 */
 #define CAM_RIGHT_SIGN       (-1.0f)     /* 左右符号 */
-#define CAM_ENGAGE_HEIGHT_CM (100.0f)    /* 40→100：按你的思路，1m以下光流定高，1m以上摄像头+光流联合定点 */
+#define CAM_ENGAGE_HEIGHT_CM (40.0f)     /* 摄像头接管高度门限 50→40 */
 #define CAM_TARGET_HEIGHT_CM (30.0f)     /* 车灯板离地高度(cm) */
 #define CAM_MIN_RANGE_CM     (10.0f)     /* 相机→灯板距离下限(cm) */
 

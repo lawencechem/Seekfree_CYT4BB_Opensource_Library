@@ -695,6 +695,28 @@ void Motor_Control_Mixing(float throttle)
     }
 
     y_out = PID_Compute_Yaw_Rate(&pid_yaw_rate, y_target_rate_dbg, y_rate_fb, 0.002f);
+
+    /* ---- Yaw 故障检测（借鉴MaplePilot/无名飞控） ----
+     * yaw PID输出大(>一半限幅)但实测yaw速率小(<30deg/s)持续2秒，
+     * 则认为是外力卡住/饱和→复位I并重锁航向，防YI无限积累。 */
+    {
+        static uint16_t yaw_stall_cnt = 0;
+        float yaw_out_half = pid_yaw_rate.out_limit * 0.5f;
+        if (fabsf(y_out) > yaw_out_half && fabsf(y_rate_fb) < 30.0f)
+        {
+            yaw_stall_cnt++;
+            if (yaw_stall_cnt > 1000U)  // 2s @ 500Hz
+            {
+                pid_yaw_rate.integral = 0.0f;
+                target_yaw = current_euler.yaw;
+                yaw_stall_cnt = 0;
+            }
+        }
+        else
+        {
+            if (yaw_stall_cnt > 0) yaw_stall_cnt--;
+        }
+    }
     
     //仅角速度阻尼，不锁航向
 //    y_target_rate_dbg = 0.0f;
