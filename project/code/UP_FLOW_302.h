@@ -112,7 +112,7 @@
 #endif
 
 /* ==================== IMU-光流 互补融合 ==================== */
-#define UPF_USE_IMU_FUSION          (0)      // 0=纯光流。实测IMU积分漂移大、量级不稳，融合只有污染
+#define UPF_USE_IMU_FUSION          (1)      // 0→1：IMU融合，光流丢帧时IMU补上，速度更平滑
 #define UPF_FUSION_ALPHA            (0.15f)  // 互补滤波：IMU权重(悬停)
 #define UPF_IMU_VEL_SCALE           (0.25f)  // IMU积分速度÷4，使其量级与光流匹配(实测imu≈4×flow)
 #define UPF_CLIMB_ALPHA             (0.0f)   // 爬升/下降时融合系数：0=纯光流，防重力分离误差引起正反馈
