@@ -34,13 +34,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 IAR_ARM_BIN = Path("C:/Program Files/IAR Systems/Embedded Workbench 9.2/arm/bin")
 IAR_COMMON_BIN = Path("C:/Program Files/IAR Systems/Embedded Workbench 9.2/common/bin")
 IARBUILD = IAR_COMMON_BIN / "iarbuild.exe"
-CSPYBAT = IAR_COMMON_BIN / "CSpyBat.exe"
+CSPYBAT = IAR_COMMON_BIN / "cspybat.exe"
 
 EWP_7_0 = REPO_ROOT / "project/iar/project_config/cyt4bb7_cm_7_0.ewp"
 EWP_7_1 = REPO_ROOT / "project/iar/project_config/cyt4bb7_cm_7_1.ewp"
 EWD_7_0 = REPO_ROOT / "project/iar/project_config/cyt4bb7_cm_7_0.ewd"
 EWD_7_1 = REPO_ROOT / "project/iar/project_config/cyt4bb7_cm_7_1.ewd"
-WSDT = REPO_ROOT / "project/iar/settings/cyt4bb7.wsdt"
+SETTINGS_DIR = REPO_ROOT / "project/iar/project_config/settings"
 
 OUT_7_0 = REPO_ROOT / "project/iar/project_config/Debug_m7_0/Exe/cyt4bb7_cm_7_0.out"
 HEX_7_0 = REPO_ROOT / "project/iar/project_config/Debug_m7_0/Exe/cyt4bb7_cm_7_0.hex"
@@ -107,49 +107,66 @@ def cmd_build(args):
 
 
 def cmd_flash(args):
-    """Flash firmware via IAR C-SPY (requires hardware debug probe)."""
+    """Flash firmware via IAR C-SPY (requires hardware debug probe).
+
+    Uses the project's auto-generated .cspy.bat files which contain the
+    correct CSpyBat invocation with processor/driver DLL paths.
+
+    The CM7_0 .ewd already includes CM7_1.hex as a second image
+    (OCImagesPath2), so flashing CM7_0 programs both cores.
+    """
     require_iarbuild()
 
     if not CSPYBAT.exists():
         print(f"ERROR: CSpyBat not found at {CSPYBAT}", file=sys.stderr)
         return 1
 
-    print("=== Flashing CM7_0 + CM7_1 via IAR C-SPY ===")
-    print("NOTE: Requires a connected debug probe (J-Link/I-jet) and target hardware.\n")
+    # Prefer using the generated .cspy.bat for correct DLL paths
+    cspy_bat_7_0 = SETTINGS_DIR / "cyt4bb7_cm_7_0.Debug.cspy.bat"
+    cspy_bat_7_1 = SETTINGS_DIR / "cyt4bb7_cm_7_1.Debug.cspy.bat"
+    general_xcl_7_0 = SETTINGS_DIR / "cyt4bb7_cm_7_0.Debug.general.xcl"
+    driver_xcl_7_0 = SETTINGS_DIR / "cyt4bb7_cm_7_0.Debug.driver.xcl"
+    general_xcl_7_1 = SETTINGS_DIR / "cyt4bb7_cm_7_1.Debug.general.xcl"
+    driver_xcl_7_1 = SETTINGS_DIR / "cyt4bb7_cm_7_1.Debug.driver.xcl"
+
+    print("=== Flashing via IAR C-SPY ===")
+    print("NOTE: Requires a connected debug probe (CMSIS-DAP/J-Link) and target hardware.\n")
+    print(f"  CM7_0 .ewd includes CM7_1.hex as second image -> programs both cores.\n")
 
     if args.core and args.core == "7_1":
-        cores = ["7_1"]
+        cores = [("7_1", "CM7_1 (vision)", general_xcl_7_1, driver_xcl_7_1, OUT_7_1)]
     else:
-        cores = ["7_0", "7_1"]
+        cores = [
+            ("7_0", "CM7_0 (flight, includes CM7_1)", general_xcl_7_0, driver_xcl_7_0, OUT_7_0),
+        ]
 
-    for core in cores:
-        if core == "7_0":
-            ewd = EWD_7_0
-            out = OUT_7_0
-        else:
-            ewd = EWD_7_1
-            out = OUT_7_1
-
-        if not ewd.exists():
-            print(f"WARNING: Debugger settings not found: {ewd}")
-            print(f"  Skipping flash for CM7_{core}.")
-            continue
-        if not out.exists():
-            print(f"ERROR: Build output not found: {out}")
-            print(f"  Run 'python driver.py build' first.")
+    for core_id, label, gxcl, dxcl, out_file in cores:
+        if not gxcl.exists():
+            print(f"  ERROR: C-SPY settings not found: {gxcl}", file=sys.stderr)
+            print(f"    Open the project in IAR IDE and start a debug session to generate them.")
             return 1
 
-        print(f"  Flashing CM7_{core}...")
-        result = subprocess.run(
-            [str(CSPYBAT), str(ewd), str(out), "--flash_loader"],
-            capture_output=False,
-        )
-        if result.returncode != 0:
-            print(f"  Flash failed for CM7_{core} (exit {result.returncode})", file=sys.stderr)
-            return result.returncode
-        print(f"  CM7_{core} flashed successfully.")
+        if not out_file.exists():
+            print(f"  ERROR: Build output not found: {out_file}", file=sys.stderr)
+            print(f"    Run 'python driver.py build' first.")
+            return 1
 
-    print("\n=== Flash complete ===")
+        print(f"  Flashing {label} ...")
+        cmd = [
+            str(CSPYBAT),
+            "-f", str(gxcl),
+            f"--debug_file={out_file}",
+            "--download_only",
+            "--backend",
+            "-f", str(dxcl),
+        ]
+        result = subprocess.run(cmd, capture_output=False)
+        if result.returncode != 0:
+            print(f"  Flash FAILED for {label} (exit {result.returncode})", file=sys.stderr)
+            return result.returncode
+        print(f"  {label} flashed successfully.\n")
+
+    print("=== Flash complete ===")
     return 0
 
 

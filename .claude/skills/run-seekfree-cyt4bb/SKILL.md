@@ -71,9 +71,11 @@ python .claude/skills/run-seekfree-cyt4bb/driver.py verify
 ## Flash
 
 **Requires a connected debug probe and target hardware.** The debugger
-settings in `cyt4bb7_cm_7_0.ewd` / `cyt4bb7_cm_7_1.ewd` define the probe
-type and flash loader (currently configured for the Infineon CYT4BB
-device file at `$TOOLKIT_DIR$\config\debugger\Infineon\CYT4BB_M7.ddf`).
+settings in `cyt4bb7_cm_7_0.ewd` define the probe type (CMSIS-DAP) and
+flash loader (`FlashCYT4_CF4M_WF256K.board`).
+
+The CM7_0 .ewd already **includes CM7_1.hex as a second image**
+(`OCImagesPath2`), so flashing CM7_0 programs **both cores at once**.
 
 ### Flash both cores (driver)
 
@@ -81,19 +83,24 @@ device file at `$TOOLKIT_DIR$\config\debugger\Infineon\CYT4BB_M7.ddf`).
 python .claude/skills/run-seekfree-cyt4bb/driver.py flash
 ```
 
-### Flash via IAR C-SPY (direct)
+This uses the project's auto-generated `.cspy.bat` settings files
+(via `CSpyBat -f general.xcl --debug_file=... --download_only --backend -f driver.xcl`).
+
+### Flash via IAR CSpyBat (direct)
 
 ```bash
-# Flash CM7_0 (includes CM7_1 via multi-core debug config)
-"C:\Program Files\IAR Systems\Embedded Workbench 9.2\common\bin\CSpyBat.exe" \
-  project/iar/project_config/cyt4bb7_cm_7_0.ewd \
-  project/iar/project_config/Debug_m7_0/Exe/cyt4bb7_cm_7_0.out \
-  --flash_loader
+# Programs both cores (CM7_0 + CM7_1)
+"C:\Program Files\IAR Systems\Embedded Workbench 9.2\common\bin\cspybat.exe" \
+  -f project/iar/project_config/settings/cyt4bb7_cm_7_0.Debug.general.xcl \
+  "--debug_file=project/iar/project_config/Debug_m7_0/Exe/cyt4bb7_cm_7_0.out" \
+  --download_only \
+  --backend \
+  -f project/iar/project_config/settings/cyt4bb7_cm_7_0.Debug.driver.xcl
 ```
 
-The dual-core debug session (`cm7_0_cm7_1_debug.xml`) launches CM7_0 first,
-then attaches to CM7_1. CM7_1 is a secondary core that starts after CM7_0
-releases it from reset.
+> The `.general.xcl` and `.driver.xcl` files are generated when you start
+> a debug session in the IAR IDE. If they don't exist, open the workspace
+> in IAR and start a debug session once to generate them.
 
 ## Debug Serial Monitor
 
