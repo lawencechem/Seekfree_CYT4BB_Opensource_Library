@@ -51,8 +51,8 @@
 |------|-------|------|
 | `FLOW_VX_KP` | 0.70 | 速度环 X 轴 P |
 | `FLOW_VY_KP` | 0.84 | 速度环 Y 轴 P |
-| `FLOW_VX_KI` | 0.04 | 速度环 X 轴 I |
-| `FLOW_VY_KI` | 0.06 | 速度环 Y 轴 I |
+| `FLOW_VX_KI` | 0.00 | 速度环 X 轴 I（已取消）|
+| `FLOW_VY_KI` | 0.00 | 速度环 Y 轴 I（已取消）|
 | `FLOW_VX_KD` | 0.0 | 速度环 X 轴 D（关）|
 | `FLOW_VY_KD` | 0.0 | 速度环 Y 轴 D（关）|
 | `FLOW_MAX_ANGLE_DEG` | 12.0° | 速度环最大修正角 |

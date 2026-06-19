@@ -12,5 +12,8 @@
         "path": "${workspaceFolder}\\project_config\\cyt4bb7_cm_7_0.ewp"
       }
     }
+  },
+  "workbench": {
+    "path": "C:\\Program Files\\IAR Systems\\Embedded Workbench 9.2"
   }
 }

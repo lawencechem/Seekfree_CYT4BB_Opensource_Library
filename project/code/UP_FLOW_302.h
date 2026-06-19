@@ -97,8 +97,8 @@
 #define FLOW_FULL_HEIGHT_CM         (15.0f)  // C1：45→30→15，配合更早接管
 #define FLOW_POS_KP                 (0.0f)
 #define FLOW_VEL_KP                 (0.0f)
-#define FLOW_VX_KI                  (0.04f)  /* 0→0.04：恢复速度环PI。I消电源线恒力分量和重心偏置。 */
-#define FLOW_VY_KI                  (0.06f)  /* 0→0.06：同X */
+#define FLOW_VX_KI                  (0.00f)  /* 0.04→0：取消速度环I。I冻结到90cm且有泄漏，实际效果微弱，关掉简化。 */
+#define FLOW_VY_KI                  (0.00f)  /* 0.06→0：同X */
 #define FLOW_VX_KD                  (0.00f)  // 0.02→0：D项放大了旋转补偿残留的假速度跳变，关掉排除
 #define FLOW_VY_KD                  (0.00f)  // 0.05→0.02→0：同上
 #define FLOW_VEL_LPF_ALPHA          (0.15f)  // 0.35→0.15，增强滤波压制高度放大的光流噪声
