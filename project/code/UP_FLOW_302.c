@@ -128,7 +128,9 @@ void Cam_IPC_Process(float height_cm)
         float tilt_v = CAM_FOCAL_PX * tanf(pitch_rad);
         cam_dbg_rcomp = tilt_u;
         cam_dbg_pcomp = tilt_v;
-        float comp_u = (float)px_u - tilt_u;
+        /* 右倾(ROLL+)→目标在画面左移(u更负)，补偿需加回tilt_u拉回中心。
+         * pitch不存在此问题：抬头(PITCH+)→目标下移(v+)→减tilt_v=正确方向。 */
+        float comp_u = (float)px_u + tilt_u;
         float comp_v = (float)px_v - tilt_v;
     #if CAM_SWAP_UV
         float px_fwd = comp_u;
