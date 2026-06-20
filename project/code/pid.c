@@ -356,7 +356,7 @@ void PID_Params_Init(void)
     pid_yaw_rate.kp = 10.0f; // 7.0→10.0，加强YAW角速度响应，锁死航向
     pid_yaw_rate.ki = 0.10f; // 0.20→0.10，减半积分防windup振荡
     pid_yaw_rate.kd = 0.0f;
-    pid_yaw_rate.i_limit = 200.0f; // 400→200，配合Ki减半
+    pid_yaw_rate.i_limit = 100.0f; // 200→100，YI限幅收紧，防持续积累
     pid_yaw_rate.out_limit = 520.0f;
     pid_yaw_rate.d_lpf_alpha = 1.0f;
 }

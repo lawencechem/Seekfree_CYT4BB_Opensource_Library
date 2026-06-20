@@ -46,7 +46,7 @@ void Altitude_System_Init(void)
     // 速度环：速度差 → 油门补偿，I 负责自动学习悬停油门
     // pid_alt_vel.kp = 5.2f;  // 旧值：刹车偏软
     // pid_alt_vel.ki = 0.24f; // 旧值：积分偏强，容易把悬停点学高
-    pid_alt_vel.kp = 6.0f;        // 7.5→6.0：降低爬升速度环P
+    pid_alt_vel.kp = 7.5f;        // 6.0→7.5：还原，速度环P硬一点Vz更稳
     pid_alt_vel.ki = 0.16f; 
     pid_alt_vel.kd = 0.0f;   // DL1B 单传感器严禁加 D
     // pid_alt_vel.i_limit  = 220.0f;  // 旧值
@@ -280,23 +280,19 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
             pid_alt_vel.integral = 0;
             break;
 
-        // ── 起飞：分段推油门，突破 20cm 后切悬停 ─────────────────
+        // ── 起飞：电机预转 → Vz速度PID恒定爬升 → 到目标附近切定高 ───
         case ALT_TAKEOFF:
-            // hold_time_s = 0.0f;
             land_time_s = 0.0f;
 
-            // 起飞阶段 TOF 丢失：先给一段缓冲时间，避免误触发直接停机
+            // TOF 长时间丢失 → 降落保护
             if (tof_lost_time_s > ALT_TOF_LOST_FAILSAFE_S) {
                 takeoff_tof_grace_s += dt;
-                // 起飞开环阶段也使用电压补偿，避免满电/低电时起飞力度不一致。
                 takeoff_thr_batt = Battery_Comp_Apply(takeoff_throttle);
                 throttle_output = f_limit(takeoff_thr_batt, THR_MOTOR_START, THR_MAX_OUTPUT);
                 dbg_thr_base = takeoff_throttle;
-                dbg_thr_alt = 0.0f;
-                alt_out = 0.0f;
+                dbg_thr_alt = 0.0f; alt_out = 0.0f;
                 target_speed_z = 0.0f;
-                dbg_alt_pos_out = 0.0f;
-                dbg_alt_vel_out = 0.0f;
+                dbg_alt_pos_out = 0.0f; dbg_alt_vel_out = 0.0f;
                 dbg_thr_precomp = takeoff_throttle;
                 dbg_thr_after_tilt = takeoff_throttle;
                 dbg_thr_after_batt = takeoff_thr_batt;
@@ -305,43 +301,35 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
                     flight_state = ALT_IDLE;
                 }
                 break;
-            } else {
-                takeoff_tof_grace_s = 0.0f;
             }
+            takeoff_tof_grace_s = 0.0f;
 
+            // 第一段：电机预转，快速越过死区
             if (takeoff_throttle < 3800.0f) {
-                takeoff_throttle += 2500.0f * dt; // 快速越过死区
-            // } else if (takeoff_throttle < (THR_HOVER_DEFAULT + 450.0f)) { // 旧值：开环推油偏猛
-            } else if (takeoff_throttle < (THR_HOVER_DEFAULT + 50.0f)) { // C1：起飞推油上限再压(150→50)，Vz 仍冲45说明开环还偏猛；离地后由定高速度环接管爬升
-                // 二段爬升只保留必要余量，避免切定高前上升速度过大
-                // takeoff_throttle += 900.0f * dt;  // 旧值
-                takeoff_throttle += 400.0f * dt;     // C1：二段爬升放缓(650→400)，让 Vz 不冲过光流门限
+                takeoff_throttle += 2500.0f * dt;
+                takeoff_thr_batt = Battery_Comp_Apply(takeoff_throttle);
+                throttle_output = f_limit(takeoff_thr_batt, THR_MOTOR_START, THR_MAX_OUTPUT);
+                dbg_thr_base = takeoff_throttle;
+                dbg_thr_alt = 0.0f; alt_out = 0.0f;
+                target_speed_z = 0.0f;
+                dbg_alt_pos_out = 0.0f; dbg_alt_vel_out = 0.0f;
+                dbg_thr_precomp = takeoff_throttle;
+                dbg_thr_after_tilt = takeoff_throttle;
+                dbg_thr_after_batt = takeoff_thr_batt;
+                dbg_batt_delta = takeoff_thr_batt - takeoff_throttle;
+                break;
             }
-            // 起飞开环油门也做电压补偿，让起飞阶段和 ALT_HOLD 阶段油门逻辑一致。
-            takeoff_thr_batt = Battery_Comp_Apply(takeoff_throttle);
-            throttle_output = f_limit(takeoff_thr_batt, THR_MOTOR_START, THR_MAX_OUTPUT);
-            dbg_thr_base = takeoff_throttle;
-            dbg_thr_alt = 0.0f;
-            alt_out = 0.0f;
-            target_speed_z = 0.0f;
-            dbg_alt_pos_out = 0.0f;
-            dbg_alt_vel_out = 0.0f;
-            dbg_thr_precomp = takeoff_throttle;
-            dbg_thr_after_tilt = takeoff_throttle;
-            dbg_thr_after_batt = takeoff_thr_batt;
-            dbg_batt_delta = takeoff_thr_batt - takeoff_throttle;
 
-            // 仅在 TOF 有新帧时才允许切到定高，避免假高度触发
-            // if (tof_has_new && current_height_cm > 22.0f && fabs(current_speed_z) < 35.0f) // 旧值：开环阶段可能推太久
-            if (tof_has_new && current_height_cm > 20.0f) 
-            {  
+            // 第二段：Vz速度PID恒定爬升，位置环目标设120cm
+            // 位置环输出被CLIMB_UP_MAX_SPEED限幅，等效恒定15cm/s爬升
+            target_height_cm = ALT_HOLD_TARGET_CM;
+            Altitude_PID_Compute(dt, tof_has_new);
+
+            // 到达目标高度附近 → 切定高模式（位置环+速度环）
+            if (tof_has_new && current_height_cm > ALT_HOLD_TARGET_CM - 10.0f)
+            {
                 flight_state = ALT_HOLD;
-                // 积分预填种：继承起飞油门，省去速度环从零学习悬停点的时间
-                //float i_temp = takeoff_throttle - THR_HOVER_DEFAULT;
-                i_temp = (takeoff_throttle - THR_HOVER_DEFAULT) * 0.10f;  //0.12
-                pid_alt_vel.integral = f_limit(i_temp, -80.0f, 160.0f);
-                
-                target_height_cm = current_height_cm;
+                // 速度环积分已由Altitude_PID_Compute持续更新，不需要预填
                 takeoff_tof_grace_s = 0.0f;
             }
             break;
