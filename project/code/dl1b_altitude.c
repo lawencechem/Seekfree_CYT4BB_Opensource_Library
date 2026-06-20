@@ -187,7 +187,7 @@ static void Altitude_PID_Compute(float dt, uint8_t tof_has_new)
     pid_alt_vel.integral *= 0.9998f;
 
     // 积分分离：仅靠近目标高度(±15cm)且有新TOF数据且速度误差不大时才积分
-    if (tof_has_new && fabs(target_height_cm - current_height_cm) < 15.0f
+    if (tof_has_new && fabs(target_height_cm - current_height_cm) < 40.0f
         && fabs(pid_alt_vel.error) < 80.0f) {
         pid_alt_vel.integral += pid_alt_vel.ki * pid_alt_vel.error * dt;
         pid_alt_vel.integral  = f_limit(pid_alt_vel.integral,
