@@ -2,6 +2,7 @@
 #include "math.h"
 #include "battery_comp.h"
 #include "quaternion.h" // 姿态角 current_euler 在此头文件中声明
+#include "mpu660ra.h"   // filtered_data: 帧间Vz加速度传播+陀螺零偏重校用
 
 extern volatile uint32_t sys_time_ms;
 
@@ -182,9 +183,8 @@ static void Altitude_PID_Compute(float dt, uint8_t tof_has_new)
     pid_alt_vel.error = target_vel - current_speed_z;
     dbg_vel_err = pid_alt_vel.error;
     
-    //积分泄放
-    // pid_alt_vel.integral *= 0.9985f;  //0。995  0.998  // 旧值：泄放过快，悬停油门难收敛
-    pid_alt_vel.integral *= 0.9998f;
+    //积分泄放（τ≈10s：在典型30-60s飞行内I能收敛到稳态值）
+    pid_alt_vel.integral *= 0.9990f;
 
     // 积分分离：仅靠近目标高度(±15cm)且有新TOF数据且速度误差不大时才积分
     if (tof_has_new && fabs(target_height_cm - current_height_cm) < 40.0f
@@ -249,9 +249,24 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
         tof_dt_acc = 0.0f;
         tof_lost_time_s = 0.0f;
     } else {
-        // 无新数据时速度衰减，避免旧值一直驱动速度环
-        current_speed_z *= 0.98f;
-        if (fabs(current_speed_z) < 0.1f) current_speed_z = 0.0f;
+        // ★ 帧间用加速度计辅助估计Vz（消除纯衰减的锯齿波）
+        // 无新帧时 Vz = 前值 + ∫a_z dt - 轻微泄放防漂移
+        // 相比纯指数衰减(0.98/10ms→-3dB/0.35s)，加入加速度积分后
+        // Vz 在帧间保持物理一致性，速度环看到的是连续信号而非锯齿
+        {
+            float az_lsb = (float)filtered_data.accel.imu660ra_acc_z;
+            // IMU660RA 加速度计 ±8g: 4096 LSB/g → 0.2394 cm/s²/LSB
+            const float ACC_VZ_SCALE = 980.665f / 4096.0f;
+            float az_body_cms2 = az_lsb * ACC_VZ_SCALE;
+            // 体轴Z → 世界系垂直加速度（减重力）
+            float cp = cosf(current_euler.pitch * 0.01745329f);
+            float cr = cosf(current_euler.roll  * 0.01745329f);
+            float az_world = az_body_cms2 * cp * cr - 980.665f;
+            // 积分+泄放：加速度积分补速度变化，泄放防零偏漂移
+            current_speed_z += az_world * dt;
+            current_speed_z *= 0.985f;  // 轻微衰减滤除残余噪声
+        }
+        if (fabsf(current_speed_z) < 0.5f) current_speed_z = 0.0f;
         tof_lost_time_s += dt;
     }
 
@@ -323,19 +338,41 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
                 break;
             }
 
+            // ★ 等待电机混控预转+缓升完成（两套状态机同步）
+            // Motor_Control_Mixing 内部有 boot_timer(500ms)+PRESPIN(600ms)+RAMP_LIMIT(1200ms)
+            // 共 ~2300ms 才进入 FULL 状态。在此期间实际电机输出由 Mixing 接管，
+            // altitude 代码发送的油门值会被 override，Vz 速度环在此阶段无意义。
+            // dbg_takeoff_state: 0=IDLE 1=PRESPIN 2=RAMP_LIMIT 3=FULL
+            if (dbg_takeoff_state < 3)  // 未到 FULL → 保持油门等待
+            {
+                takeoff_throttle = 3800.0f;
+                soft_climb_target = 0.0f;
+                takeoff_thr_batt = Battery_Comp_Apply(takeoff_throttle);
+                throttle_output = f_limit(takeoff_thr_batt, THR_MOTOR_START, THR_MAX_OUTPUT);
+                dbg_thr_base = takeoff_throttle;
+                dbg_thr_alt = 0.0f; alt_out = 0.0f;
+                target_speed_z = 0.0f;
+                dbg_alt_pos_out = 0.0f; dbg_alt_vel_out = 0.0f;
+                dbg_thr_precomp = takeoff_throttle;
+                dbg_thr_after_tilt = takeoff_throttle;
+                dbg_thr_after_batt = takeoff_thr_batt;
+                dbg_batt_delta = takeoff_thr_batt - takeoff_throttle;
+                break;
+            }
+
             // 第二段：纯Vz速度环爬升（不跑位置环，防与定高段冲突）
             {
                 // 软启动：目标Vz从0渐变到5cm/s
                 soft_climb_target += 0.5f * dt;
                 if (soft_climb_target > 5.0f) soft_climb_target = 5.0f;
-                
+
                 // 只跑速度环：直接设目标Vz，跳过位置环
                 pid_alt_vel.kp = 8.0f;  // 爬升段强P
                 pid_alt_vel.error = soft_climb_target - current_speed_z;
                 dbg_vel_err = pid_alt_vel.error;
-                
-                // I项泄放+积分分离（同Altitude_PID_Compute）
-                pid_alt_vel.integral *= 0.9998f;
+
+                // I项泄放+积分分离（τ≈10s，同Altitude_PID_Compute）
+                pid_alt_vel.integral *= 0.9990f;
                 if (tof_has_new && fabs(pid_alt_vel.error) < 80.0f) {
                     pid_alt_vel.integral += pid_alt_vel.ki * pid_alt_vel.error * dt;
                     pid_alt_vel.integral = f_limit(pid_alt_vel.integral,

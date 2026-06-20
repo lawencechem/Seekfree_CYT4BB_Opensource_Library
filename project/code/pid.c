@@ -469,6 +469,9 @@ float dbg_takeoff_trim_weight = 0.0f;
 float dbg_yaw_bias_for_mix = 0.0f;
 float dbg_yaw_takeoff_weight = 1.0f;
 
+// 温漂陀螺零偏重校准（定义在文件末尾，前向声明供 Motor_Control_Mixing 调用）
+void Gyro_Bias_Recalibrate_2ms(int16 gx, int16 gy, int16 gz, float throttle);
+
 void Motor_Control_Mixing(float throttle) 
 {
     static uint16_t boot_timer = 0;
@@ -498,6 +501,12 @@ void Motor_Control_Mixing(float throttle)
     float p_rate_fb = -(float)filtered_data.gyro.imu660ra_gyro_y * 0.061f;
     float r_rate_fb = -(float)filtered_data.gyro.imu660ra_gyro_x * 0.061f;
     float y_rate_fb =  (float)filtered_data.gyro.imu660ra_gyro_z * 0.061f;
+
+    // 温漂陀螺零偏后台重校准（每次ISR调用，仅在静止+低油门时更新）
+    Gyro_Bias_Recalibrate_2ms(last_gyro.imu660ra_gyro_x,
+                              last_gyro.imu660ra_gyro_y,
+                              last_gyro.imu660ra_gyro_z,
+                              throttle);
 
     // 起飞流程入口安全保险：
     // 起飞阶段不是等飞机翻到很大角度才保护，而是刚出现明显翻机趋势就中止起飞。
@@ -705,7 +714,7 @@ void Motor_Control_Mixing(float throttle)
         if (fabsf(y_out) > yaw_out_half && fabsf(y_rate_fb) < 30.0f)
         {
             yaw_stall_cnt++;
-            if (yaw_stall_cnt > 1000U)  // 2s @ 500Hz
+            if (yaw_stall_cnt > 250U)   // 0.5s @ 500Hz（原1000U→2s太长了，卡住时机体偏航已不可接受）
             {
                 pid_yaw_rate.integral = 0.0f;
                 target_yaw = current_euler.yaw;
@@ -815,7 +824,78 @@ void Motor_Control_Mixing(float throttle)
         dbg_m3_target = m3_target;
         dbg_m4_target = m4_target;
 
-        small_driver_set_duty (m1_target, m2_target, m3_target, m4_target); 
+        small_driver_set_duty (m1_target, m2_target, m3_target, m4_target);
     }
 }
- 
+
+/* ============================================================================
+ * IMU 温漂陀螺零偏后台重校准
+ *
+ * 原理：IMU660RA 上电后前几分钟温漂最明显（可达 ±0.5°/s）。
+ *       boot 时的 Int_MPU6050_calculate_offset 标定一次，但温漂会持续。
+ *       本函数在飞机静止(低陀螺方差)且电机未运转(低油门)时，
+ *       持续追踪陀螺残余偏置并缓慢更新 gyro_x/y/z_offset。
+ *
+ * 调用：Motor_Control_Mixing 内每 2ms 调一次
+ * 条件：方差 < 阈值(≈静止) 且 throttle < 500(≈不上电) 持续 3s
+ * 更新：每次吸收残余偏置的 1%（~100 次校准事件 = ~100s 静止时间达到稳态）
+ * ============================================================================ */
+#define GYRO_CAL_WINDOW_SAMPLES   (250)   // 250×2ms = 0.5s 统计窗口
+#define GYRO_CAL_VAR_THRESH_LSB2  (15.0f) // 方差阈值(LSB²)，静止时通常 <5
+#define GYRO_CAL_SETTLE_MS        (3000U) // 持续静止多久才更新(3s)
+#define GYRO_CAL_LEAK_RATE        (0.01f) // 每次吸收 1% 残余，防跳变
+
+void Gyro_Bias_Recalibrate_2ms(int16 gx, int16 gy, int16 gz, float throttle)
+{
+    static float  sum_x = 0.0f, sum_y = 0.0f, sum_z = 0.0f;
+    static float  sum_sq_x = 0.0f, sum_sq_y = 0.0f, sum_sq_z = 0.0f;
+    static uint16_t cnt = 0;
+    static uint16_t stationary_ms = 0;
+
+    /* 累计均值和二阶矩（用于方差 = E[X²] - E[X]²） */
+    sum_x += (float)gx;
+    sum_y += (float)gy;
+    sum_z += (float)gz;
+    sum_sq_x += (float)gx * (float)gx;
+    sum_sq_y += (float)gy * (float)gy;
+    sum_sq_z += (float)gz * (float)gz;
+    cnt++;
+
+    if (cnt < GYRO_CAL_WINDOW_SAMPLES) return;
+
+    /* 窗口满 → 计算均值和方差 */
+    float mean_x = sum_x / (float)GYRO_CAL_WINDOW_SAMPLES;
+    float mean_y = sum_y / (float)GYRO_CAL_WINDOW_SAMPLES;
+    float mean_z = sum_z / (float)GYRO_CAL_WINDOW_SAMPLES;
+    float var_x  = sum_sq_x / (float)GYRO_CAL_WINDOW_SAMPLES - mean_x * mean_x;
+    float var_y  = sum_sq_y / (float)GYRO_CAL_WINDOW_SAMPLES - mean_y * mean_y;
+    float var_z  = sum_sq_z / (float)GYRO_CAL_WINDOW_SAMPLES - mean_z * mean_z;
+
+    /* 复位累加器 */
+    sum_x = sum_y = sum_z = 0.0f;
+    sum_sq_x = sum_sq_y = sum_sq_z = 0.0f;
+    cnt = 0;
+
+    /* 判断是否静止：三轴方差低 + 油门低（电机不转） */
+    if (var_x < GYRO_CAL_VAR_THRESH_LSB2 &&
+        var_y < GYRO_CAL_VAR_THRESH_LSB2 &&
+        var_z < GYRO_CAL_VAR_THRESH_LSB2 &&
+        throttle < 500.0f)
+    {
+        stationary_ms += GYRO_CAL_WINDOW_SAMPLES * 2;  // ~500ms/窗口
+        if (stationary_ms >= GYRO_CAL_SETTLE_MS)
+        {
+            /* last_gyro = raw - offset，所以其均值 = 残余偏置。
+             * 将残余偏置缓慢吸收进 offset，消除温漂。
+             * 用 += 而非 =，且只吸收一小部分，防止单次误检导致跳变。 */
+            gyro_x_offset += (int32)(mean_x * GYRO_CAL_LEAK_RATE);
+            gyro_y_offset += (int32)(mean_y * GYRO_CAL_LEAK_RATE);
+            gyro_z_offset += (int32)(mean_z * GYRO_CAL_LEAK_RATE);
+            stationary_ms = 0;
+        }
+    }
+    else
+    {
+        stationary_ms = 0;
+    }
+}
