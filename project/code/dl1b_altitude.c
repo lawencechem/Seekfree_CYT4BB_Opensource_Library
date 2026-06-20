@@ -41,12 +41,12 @@ void Altitude_System_Init(void)
     pid_alt_pos.kp = 0.60f;  //0.55
     pid_alt_pos.ki = 0.0f;
     pid_alt_pos.kd = 0.0f;
-    pid_alt_pos.out_limit = CLIMB_UP_MAX_SPEED;
+    pid_alt_pos.out_limit = CLIMB_UP_MAX_SPEED;  // 定高段=12
 
     // 速度环：速度差 → 油门补偿，I 负责自动学习悬停油门
     // pid_alt_vel.kp = 5.2f;  // 旧值：刹车偏软
     // pid_alt_vel.ki = 0.24f; // 旧值：积分偏强，容易把悬停点学高
-    pid_alt_vel.kp = 8.0f;        // 3.0→8.0：P太弱刹不住下降，还原到接近原始值
+    pid_alt_vel.kp = 7.5f;        // 定高段原始P
     pid_alt_vel.ki = 0.16f; 
     pid_alt_vel.kd = 0.0f;   // DL1B 单传感器严禁加 D
     // pid_alt_vel.i_limit  = 220.0f;  // 旧值
@@ -173,7 +173,7 @@ static void Altitude_PID_Compute(float dt, uint8_t tof_has_new)
     dbg_alt_err = pid_alt_pos.error;
 
     float target_vel = pid_alt_pos.kp * pid_alt_pos.error;
-    target_vel = f_limit(target_vel, CLIMB_DOWN_MAX_SPEED, CLIMB_UP_MAX_SPEED);
+    target_vel = f_limit(target_vel, CLIMB_DOWN_MAX_SPEED, pid_alt_pos.out_limit);
     dbg_target_vel = target_vel;
     target_speed_z = target_vel;
     dbg_alt_pos_out = target_vel;
@@ -284,6 +284,7 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
         // ── 起飞：电机预转 → Vz速度PID恒定爬升 → 到目标附近切定高 ───
         case ALT_TAKEOFF:
             land_time_s = 0.0f;
+            static float soft_climb_target = 0.0f;  // 爬升软启动（在case级别声明，可访问重置）
 
             // TOF 长时间丢失 → 降落保护
             if (tof_lost_time_s > ALT_TOF_LOST_FAILSAFE_S) {
@@ -305,9 +306,10 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
             }
             takeoff_tof_grace_s = 0.0f;
 
-            // 第一段：电机预转，快速越过死区
+            // 第一段：电机预转，快速越过死区（同时重置爬升软启动）
             if (takeoff_throttle < 3800.0f) {
                 takeoff_throttle += 2500.0f * dt;
+                soft_climb_target = 0.0f;  // 每次起飞重置
                 takeoff_thr_batt = Battery_Comp_Apply(takeoff_throttle);
                 throttle_output = f_limit(takeoff_thr_batt, THR_MOTOR_START, THR_MAX_OUTPUT);
                 dbg_thr_base = takeoff_throttle;
@@ -321,16 +323,53 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
                 break;
             }
 
-            // 第二段：Vz速度PID恒定爬升，位置环目标设120cm
-            // 位置环输出被CLIMB_UP_MAX_SPEED限幅，等效恒定15cm/s爬升
-            target_height_cm = ALT_HOLD_TARGET_CM;
-            Altitude_PID_Compute(dt, tof_has_new);
+            // 第二段：纯Vz速度环爬升（不跑位置环，防与定高段冲突）
+            {
+                // 软启动：目标Vz从0渐变到5cm/s
+                soft_climb_target += 0.5f * dt;
+                if (soft_climb_target > 5.0f) soft_climb_target = 5.0f;
+                
+                // 只跑速度环：直接设目标Vz，跳过位置环
+                pid_alt_vel.kp = 8.0f;  // 爬升段强P
+                pid_alt_vel.error = soft_climb_target - current_speed_z;
+                dbg_vel_err = pid_alt_vel.error;
+                
+                // I项泄放+积分分离（同Altitude_PID_Compute）
+                pid_alt_vel.integral *= 0.9998f;
+                if (tof_has_new && fabs(pid_alt_vel.error) < 80.0f) {
+                    pid_alt_vel.integral += pid_alt_vel.ki * pid_alt_vel.error * dt;
+                    pid_alt_vel.integral = f_limit(pid_alt_vel.integral,
+                                                    -pid_alt_vel.i_limit,
+                                                     pid_alt_vel.i_limit);
+                }
+                
+                float vel_pid_out = (pid_alt_vel.kp * pid_alt_vel.error) + pid_alt_vel.integral;
+                vel_pid_out = f_limit(vel_pid_out, -pid_alt_vel.out_limit, pid_alt_vel.out_limit);
+                
+                // 油门输出
+                float final_thr = THR_HOVER_DEFAULT + vel_pid_out;
+                final_thr = Altitude_Tilt_Compensate(final_thr, current_euler.pitch, current_euler.roll);
+                float final_thr_batt = Battery_Comp_Apply(final_thr);
+                throttle_output = f_limit(final_thr_batt, THR_MIN_OUTPUT, THR_MAX_OUTPUT);
+                
+                // 调试变量
+                target_speed_z = soft_climb_target;
+                alt_out = vel_pid_out;
+                dbg_alt_pos_out = soft_climb_target;
+                dbg_alt_vel_out = vel_pid_out;
+                dbg_thr_base = THR_HOVER_DEFAULT;
+                dbg_thr_alt = vel_pid_out;
+                dbg_thr_precomp = final_thr;
+                dbg_thr_after_tilt = final_thr;
+                dbg_thr_after_batt = final_thr_batt;
+            }
 
-            // 到达目标高度附近 → 切定高模式（位置环+速度环）
+            // 到达目标高度附近 → 切定高模式（恢复定高段原始参数）
             if (tof_has_new && current_height_cm > ALT_HOLD_TARGET_CM - 10.0f)
             {
                 flight_state = ALT_HOLD;
-                // 速度环积分已由Altitude_PID_Compute持续更新，不需要预填
+                pid_alt_vel.kp = 7.5f;        // 恢复原始P
+                target_height_cm = current_height_cm;  // 从当前高度开始平滑爬升
                 takeoff_tof_grace_s = 0.0f;
             }
             break;

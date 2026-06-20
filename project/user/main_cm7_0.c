@@ -281,7 +281,7 @@ volatile uint32_t sys_time_ms = 0; // 【定高调试】全局毫秒级时间戳
                        "fw:%.2f pc:%.2f rc:%.2f evx:%.1f evy:%.1f op:%.2f or:%.2f ivx:%.1f ivy:%.1f "
                        "ROL:%.1f PIT:%.1f "
                        "TGTY:%.1f YR:%.1f YRC:%.1f YL:%.0f YI:%.1f cv:%d cx:%.1f cy:%.1f u:%d v:%d ar:%d mg:%d rx:%u "
-                       "PO:%.0f RO:%.0f YO:%.1f PR:%.1f RR:%.1f\r\n",
+                       "PO:%.0f RO:%.0f YO:%.1f PR:%.1f RR:%.1f PD:%.2f RD:%.2f PC:%.1f RC:%.1f\r\n",
                        flow_active,
                        upf_data_valid,
                        upf_data_fresh,
@@ -323,7 +323,13 @@ volatile uint32_t sys_time_ms = 0; // 【定高调试】全局毫秒级时间戳
                        (unsigned int)cam_dbg_rx_cnt,  // rx：IPC计数
                        // PO/RO=内环最终混控值，YO=yaw限幅后输出，PR/RR=角度环目标角速度
                        p_out, r_out, y_limited,
-                       p_target_rate, r_target_rate_dbg);
+                       p_target_rate, r_target_rate_dbg,
+                       // PD/RD：俯仰/横滚D项贡献（姿态环调试）
+                       pid_pitch_rate.kd * pid_pitch_rate.derivative,
+                       pid_roll_rate.kd  * pid_roll_rate.derivative,
+                       // PC/RC：俯仰/横滚倾斜补偿量（像素，评估补偿效果）
+                       cam_dbg_pcomp,
+                       cam_dbg_rcomp);
             }
 
         }

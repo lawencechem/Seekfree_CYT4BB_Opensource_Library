@@ -248,8 +248,10 @@ void Cam_Vel_Mock_Reset(void);
  *
  * 【分离设计】数据源(A) 和 外环(B) 分开：接真相机时只换 A(改成读共享内存+IMU去旋转)，
  *            外环 B 完全不动。*/
-#define CAM_POS_KP        (0.30f)   /* 0.75→0.30：和MaplePilot一致，温柔指路不饱和 */
-#define V_FOLLOW_MAX      (12.0f)   /* 18→12：降最大期望速度，减少倾斜→减少定高耦合 */
+#define CAM_POS_KP        (1.0f)    /* 0.60→1.0：要有明显收敛趋势，速度环刚好不饱和 */
+#define CAM_FF_GAIN       (0.40f)   /* 前馈增益：偏移变化率→速度补偿，快速响应线猛拉 */
+#define CAM_DEADBAND_CM   (4.0f)    /* 死区±4cm(~8pixel)，小偏移不出命令，电机安静不抖动 */
+#define V_FOLLOW_MAX      (12.0f)   /* 6→12：要给速度环足够的指令追上线 */
 #define VCAR_MODE         (0)       /* 虚拟车运动：0=静止(阶跃测试，先飞这个)  1=正弦往返 */
 #define VCAR_STEP_X       (30.0f)   /* 静止模式：车固定在世界系 X=此值(cm)，飞机阶跃飞过去并停住(40→30 留线缆余量) */
 #define VCAR_SINE_AMP     (30.0f)   /* 正弦模式：幅度(cm)(50→30 留线缆余量) */
@@ -268,6 +270,8 @@ extern uint8  cam_dbg_maxg;
 extern float  cam_dbg_x, cam_dbg_y;
 extern uint8  cam_dbg_valid;
 extern uint16 cam_dbg_rx_cnt;
+extern float  cam_dbg_pcomp;      /* 俯仰补偿量(像素)，评估倾斜补偿效果 */
+extern float  cam_dbg_rcomp;      /* 横滚补偿量(像素) */
 extern uint32 cam_dbg_last_raw;
 
 /* ==================== 相机接口（真实摄像头，FOLLOW_STEP=4）==================== */

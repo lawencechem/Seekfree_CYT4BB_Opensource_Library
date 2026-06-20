@@ -68,6 +68,8 @@ float  cam_dbg_x = 0.0f, cam_dbg_y = 0.0f;
 uint8  cam_dbg_valid = 0;
 uint16 cam_dbg_rx_cnt = 0;
 uint32 cam_dbg_last_raw = 0;
+float  cam_dbg_pcomp = 0.0f;     /* 俯仰补偿像素 */
+float  cam_dbg_rcomp = 0.0f;     /* 横滚补偿像素 */
 
 extern volatile uint32_t sys_time_ms;     /* main 维护的毫秒时间戳 */
 
@@ -117,17 +119,28 @@ void Cam_IPC_Process(float height_cm)
     {
         int16 px_u = cam_px_u;
         int16 px_v = cam_px_v;
+        /* 仰角+横滚补偿：减掉飞机倾斜导致的像素偏移，防止位置环追假偏移
+         * 补偿公式：comp = raw - FOCAL_PX * tan(angle)
+         * 飞机低头(pitch负)→目标在画面中上移(v更负)→减掉tan(pitch)把目标拉回中心 */
+        float pitch_rad = current_euler.pitch * DEG2RAD;
+        float roll_rad  = current_euler.roll  * DEG2RAD;
+        float tilt_u = CAM_FOCAL_PX * tanf(roll_rad);
+        float tilt_v = CAM_FOCAL_PX * tanf(pitch_rad);
+        cam_dbg_rcomp = tilt_u;
+        cam_dbg_pcomp = tilt_v;
+        float comp_u = (float)px_u - tilt_u;
+        float comp_v = (float)px_v - tilt_v;
     #if CAM_SWAP_UV
-        int16 px_fwd = px_u;
-        int16 px_right = px_v;
+        float px_fwd = comp_u;
+        float px_right = comp_v;
     #else
-        int16 px_fwd = px_v;
-        int16 px_right = px_u;
+        float px_fwd = comp_v;
+        float px_right = comp_u;
     #endif
         float cam_range_cm = height_cm - CAM_TARGET_HEIGHT_CM;
         if (cam_range_cm < CAM_MIN_RANGE_CM) cam_range_cm = CAM_MIN_RANGE_CM;
-        float fwd_cm   = CAM_FWD_SIGN   * (float)px_fwd   * cam_range_cm / CAM_FOCAL_PX;
-        float right_cm = CAM_RIGHT_SIGN * (float)px_right * cam_range_cm / CAM_FOCAL_PX;
+        float fwd_cm   = CAM_FWD_SIGN   * px_fwd   * cam_range_cm / CAM_FOCAL_PX;
+        float right_cm = CAM_RIGHT_SIGN * px_right * cam_range_cm / CAM_FOCAL_PX;
         Cam_Set_Target(fwd_cm, right_cm, 1);
     }
     else
@@ -785,24 +798,39 @@ void Cam_Pos_Mock_Update(float dt)
 }
 
 /* (B) 跟随外环：相对坐标(误差) → 期望速度。
- * 纯P控制，不加I/D。~1Hz电源线摆动下I相位滞后→助振，D放大噪声。
+ * P + 前馈(FF)：P快速回应，FF响应偏移变化率，线猛拉时提前出力。
+ * 死区±4cm内不修正，FF用差分+LPF防摄像头抖动噪声。
  * @param dt 调用周期(秒)
  */
 void Cam_Follow_Outer_Update(float dt)
 {
-    (void)dt;
+    static float last_ex = 0.0f, last_ey = 0.0f;
+    static float ff_x = 0.0f, ff_y = 0.0f;
+    
     if (!cam_valid)
     {
         upf_target_vx = 0.0f;
         upf_target_vy = 0.0f;
+        last_ex = 0.0f; last_ey = 0.0f;
+        ff_x = 0.0f; ff_y = 0.0f;
         return;
     }
 
-    /* 轴映射：摄像头X→光流Y负、摄像头Y→光流X正（用户实测确认）
-     * vx_des(光流X/俯仰) = KP × cam_rel_y(摄像头Y正)
-     * vy_des(光流Y/横滚) = -KP × cam_rel_x(摄像头X正→光流Y负) */
-    float vx_des =  CAM_POS_KP * cam_rel_y;
-    float vy_des = -CAM_POS_KP * cam_rel_x;
+    /* 轴映射：摄像头X→光流Y负、摄像头Y→光流X正（用户实测确认） */
+    float err_x =  cam_rel_y;
+    float err_y = -cam_rel_x;
+    if (fabsf(err_x) < CAM_DEADBAND_CM) err_x = 0.0f;
+    if (fabsf(err_y) < CAM_DEADBAND_CM) err_y = 0.0f;
+    
+    // 前馈：误差变化率 → 速度补偿（差分+LPF防抖）
+    float raw_ff_x = (err_x - last_ex) / dt;
+    float raw_ff_y = (err_y - last_ey) / dt;
+    last_ex = err_x; last_ey = err_y;
+    ff_x += 0.2f * (raw_ff_x * CAM_FF_GAIN - ff_x);  // LPF alpha=0.2
+    ff_y += 0.2f * (raw_ff_y * CAM_FF_GAIN - ff_y);
+    
+    float vx_des = CAM_POS_KP * err_x + ff_x;
+    float vy_des = CAM_POS_KP * err_y + ff_y;
     upf_target_vx = f_limit(vx_des, -V_FOLLOW_MAX, V_FOLLOW_MAX);
     upf_target_vy = f_limit(vy_des, -V_FOLLOW_MAX, V_FOLLOW_MAX);
 }
