@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"/e/weixin/xwechat_files/wxid_xd2349af4t3r22_f075/msg/file/2026-06/CYT4BB7_Library-master-6-611111111111/Seekfree_CYT4BB_Opensource_Library/project/iar\" && grep -B5 -A10 \"OOCOutputFile\\\\|HexConverter\\\\|extraOutput\\\\|hex.*conver\" project_config/cyt4bb7_cm_7_0.ewp | head -40)",
+      "Read(//e/e/weixin/xwechat_files/wxid_xd2349af4t3r22_f075/msg/file/2026-06/CYT4BB7_Library-master-6-611111111111/Seekfree_CYT4BB_Opensource_Library/project/iar/project_config/**)",
+      "Bash(cd \"/e/weixin/xwechat_files/wxid_xd2349af4t3r22_f075/msg/file/2026-06/CYT4BB7_Library-master-6-611111111111/Seekfree_CYT4BB_Opensource_Library/project/iar\" && grep -B5 -A5 \"OutputFile\" project_config/cyt4bb7_cm_7_0.ewp | head -30)",
+      "Read(//c/Program Files/IAR Systems/**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Bash(python3 .claude/skills/run-seekfree-cyt4bb/driver.py build --core 7_0)"
+    ]
+  }
+}
