@@ -46,7 +46,7 @@ void Altitude_System_Init(void)
     // 速度环：速度差 → 油门补偿，I 负责自动学习悬停油门
     // pid_alt_vel.kp = 5.2f;  // 旧值：刹车偏软
     // pid_alt_vel.ki = 0.24f; // 旧值：积分偏强，容易把悬停点学高
-    pid_alt_vel.kp = 7.5f;        // 6.0→7.5：还原，速度环P硬一点Vz更稳
+    pid_alt_vel.kp = 4.0f;        // 7.5→4.0：降Z轴速度环P
     pid_alt_vel.ki = 0.16f; 
     pid_alt_vel.kd = 0.0f;   // DL1B 单传感器严禁加 D
     // pid_alt_vel.i_limit  = 220.0f;  // 旧值
