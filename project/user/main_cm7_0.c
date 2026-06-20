@@ -129,8 +129,7 @@ volatile uint32_t sys_time_ms = 0; // 【定高调试】全局毫秒级时间戳
              * 50cm/s 门限：悬停(Vz<5)正常，爬升(Vz=15-48)关速度环，
              * 到顶Vz降回后自动恢复。积分冻结(D<12)防恢复时冲击。 */
             uint8_t flow_active = (current_height_cm > FLOW_START_HEIGHT_CM &&
-                                   upf_data_fresh &&
-                                   fabsf(current_speed_z) < 50.0f) ? 1U : 0U;
+                                   upf_data_fresh) ? 1U : 0U;
             float flow_weight = 0.0f;
 
             if (FLOW_HOLD_ENABLE && FLOW_VEL_DAMP_ENABLE && flow_active)

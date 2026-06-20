@@ -249,7 +249,7 @@ void Cam_Vel_Mock_Reset(void);
  * 【分离设计】数据源(A) 和 外环(B) 分开：接真相机时只换 A(改成读共享内存+IMU去旋转)，
  *            外环 B 完全不动。*/
 #define CAM_POS_KP        (0.30f)   /* 0.75→0.30：和MaplePilot一致，温柔指路不饱和 */
-#define V_FOLLOW_MAX      (18.0f)   /* 期望速度限幅(cm/s)。120cm 高线缆横向余量~90cm，限速+小幅度保证不拉直 */
+#define V_FOLLOW_MAX      (12.0f)   /* 18→12：降最大期望速度，减少倾斜→减少定高耦合 */
 #define VCAR_MODE         (0)       /* 虚拟车运动：0=静止(阶跃测试，先飞这个)  1=正弦往返 */
 #define VCAR_STEP_X       (30.0f)   /* 静止模式：车固定在世界系 X=此值(cm)，飞机阶跃飞过去并停住(40→30 留线缆余量) */
 #define VCAR_SINE_AMP     (30.0f)   /* 正弦模式：幅度(cm)(50→30 留线缆余量) */

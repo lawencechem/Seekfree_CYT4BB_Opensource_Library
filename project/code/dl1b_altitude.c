@@ -46,7 +46,7 @@ void Altitude_System_Init(void)
     // 速度环：速度差 → 油门补偿，I 负责自动学习悬停油门
     // pid_alt_vel.kp = 5.2f;  // 旧值：刹车偏软
     // pid_alt_vel.ki = 0.24f; // 旧值：积分偏强，容易把悬停点学高
-    pid_alt_vel.kp = 4.0f;        // 7.5→4.0：降Z轴速度环P
+    pid_alt_vel.kp = 8.0f;        // 3.0→8.0：P太弱刹不住下降，还原到接近原始值
     pid_alt_vel.ki = 0.16f; 
     pid_alt_vel.kd = 0.0f;   // DL1B 单传感器严禁加 D
     // pid_alt_vel.i_limit  = 220.0f;  // 旧值
@@ -186,8 +186,9 @@ static void Altitude_PID_Compute(float dt, uint8_t tof_has_new)
     // pid_alt_vel.integral *= 0.9985f;  //0。995  0.998  // 旧值：泄放过快，悬停油门难收敛
     pid_alt_vel.integral *= 0.9998f;
 
-    // 积分分离：仅在有新 TOF 数据且误差不大时才积分，防暴走
-    if (tof_has_new && fabs(pid_alt_vel.error) < 80.0f) {
+    // 积分分离：仅靠近目标高度(±15cm)且有新TOF数据且速度误差不大时才积分
+    if (tof_has_new && fabs(target_height_cm - current_height_cm) < 15.0f
+        && fabs(pid_alt_vel.error) < 80.0f) {
         pid_alt_vel.integral += pid_alt_vel.ki * pid_alt_vel.error * dt;
         pid_alt_vel.integral  = f_limit(pid_alt_vel.integral,
                                         -pid_alt_vel.i_limit,
