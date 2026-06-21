@@ -368,7 +368,7 @@ void PID_Params_Init(void)
     pid_yaw_rate.ki = 0.10f; // 0.20→0.10，减半积分防windup振荡
     pid_yaw_rate.kd = 0.0f;
     pid_yaw_rate.i_limit = 100.0f; // 200→100，YI限幅收紧，防持续积累
-    pid_yaw_rate.out_limit = 400.0f;  /* 520→400：给前馈留120余量。PID+前馈不超过520，anti-windup正确生效 */
+    pid_yaw_rate.out_limit = 520.0f;  /* 400→520：恢复原值，给Yaw更多力矩对抗系绳扭力 */
     pid_yaw_rate.d_lpf_alpha = 1.0f;
 }
 

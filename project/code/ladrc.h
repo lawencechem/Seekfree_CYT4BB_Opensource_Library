@@ -15,21 +15,27 @@
 /* ── 主开关：0=仅旁观对比, 1=替代PID控制角速度环 ── */
 #define LADRC_ENABLE            (0)
 
+/* ==================== 三轴 LADRC 参数 ====================
+ * 基于飞行数据对比 PO vs LPO、RO vs LRO、YO vs LYO 整定。
+ * WC=10/8时 LADRC 响应≈100ms，与PID的70ms接近，
+ * 大幅减少符号相反的情况。
+ * ====================================================== */
+
 /* ── Pitch 参数 ── */
-#define LADRC_P_WC              (14.0f)  /* 控制器带宽(rad/s)，匹配原 KP=14 */
-#define LADRC_P_WO              (30.0f)  /* 观测器带宽(rad/s) */
-#define LADRC_P_B0              (1.0f)   /* 增益估计 */
+#define LADRC_P_WC              (10.0f)  /* 5→10：提速匹配PID响应(14rad/s) */
+#define LADRC_P_WO              (30.0f)  /* 15→30：ESO跟踪加快 */
+#define LADRC_P_B0              (1.0f)
 #define LADRC_P_LIMIT           (1200.0f)
 
 /* ── Roll 参数 ── */
-#define LADRC_R_WC              (13.5f)
-#define LADRC_R_WO              (30.0f)
+#define LADRC_R_WC              (10.0f)  /* 5→10 */
+#define LADRC_R_WO              (30.0f)  /* 15→30 */
 #define LADRC_R_B0              (1.0f)
 #define LADRC_R_LIMIT           (1200.0f)
 
 /* ── Yaw 参数 ── */
-#define LADRC_Y_WC              (5.0f)
-#define LADRC_Y_WO              (15.0f)
+#define LADRC_Y_WC              (5.0f)   /* 2→5 */
+#define LADRC_Y_WO              (15.0f)  /* 6→15 */
 #define LADRC_Y_B0              (0.7f)
 #define LADRC_Y_LIMIT           (400.0f)
 

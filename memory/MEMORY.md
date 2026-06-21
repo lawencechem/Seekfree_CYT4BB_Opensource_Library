@@ -1,1 +1,2 @@
 - [Car-following requirements](car-following-requirements.md) — drone must actively follow a moving car, fast response + continuous parameter optimization
+- [Engine Control System](engine-control-system.md) — full flight control architecture, all PID/LADRC parameters, serial debug format

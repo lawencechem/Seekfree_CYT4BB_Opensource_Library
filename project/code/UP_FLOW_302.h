@@ -261,7 +261,7 @@ void Cam_Vel_Mock_Reset(void);
  *
  * 【分离设计】数据源(A) 和 外环(B) 分开：接真相机时只换 A(改成读共享内存+IMU去旋转)，
  *            外环 B 完全不动。*/
-#define CAM_POS_KP        (1.00f)   /* 位置环P */
+#define CAM_POS_KP        (1.28f)   /* 位置环P */
 #define CAM_POS_KD        (0.15f)   /* 位置环D：d(err)/dt→速度阻尼，频率无关消耗摆动能量 */
 #define CAM_POS_D_LPF     (0.25f)   /* D项LPF(~4Hz截止)：滤摄像头50ms帧间像素跳变，保留摆锤频率 */
 #define CAM_FF_GAIN       (0.55f)

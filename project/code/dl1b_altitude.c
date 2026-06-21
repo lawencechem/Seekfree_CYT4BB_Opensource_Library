@@ -39,14 +39,16 @@ static float takeoff_throttle = THR_MOTOR_START;
 void Altitude_System_Init(void)
 {
     // 位置环：高度差 → 期望速度，只要 P
-    pid_alt_pos.kp = 0.80f;  // 0.60→0.80：更强回归力
+    pid_alt_pos.kp = 0.60f;  //0.55
     pid_alt_pos.ki = 0.0f;
     pid_alt_pos.kd = 0.0f;
-    pid_alt_pos.out_limit = 20.0f;  // 12→20：净爬升力更大
+    pid_alt_pos.out_limit = CLIMB_UP_MAX_SPEED;  // 定高段=12
 
-    // 速度环：速度差 → 油门补偿
-    pid_alt_vel.kp = 5.5f;        // 7.5→5.5：降速环P减少Vz振荡→油门泵动耦合
-    pid_alt_vel.ki = 0.18f;       // 0.16→0.18：I稍强
+    // 速度环：速度差 → 油门补偿，I 负责自动学习悬停油门
+    // pid_alt_vel.kp = 5.2f;  // 旧值：刹车偏软
+    // pid_alt_vel.ki = 0.24f; // 旧值：积分偏强，容易把悬停点学高
+    pid_alt_vel.kp = 7.5f;        // 定高段原始P
+    pid_alt_vel.ki = 0.16f;
     pid_alt_vel.kd = 0.0f;   // DL1B 单传感器严禁加 D
     // pid_alt_vel.i_limit  = 220.0f;  // 旧值
     // pid_alt_vel.out_limit = 500.0f; // 旧值
@@ -346,9 +348,9 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
 
             // 第二段：纯Vz速度环爬升（不跑位置环，防与定高段冲突）
             {
-                // 软启动：目标Vz从0渐变到5cm/s
-                soft_climb_target += 1.0f * dt;
-                if (soft_climb_target > 5.0f) soft_climb_target = 5.0f;
+                // 软启动：目标Vz从0渐变到8cm/s
+                soft_climb_target += 1.5f * dt;
+                if (soft_climb_target > 8.0f) soft_climb_target = 8.0f;
 
                 // 只跑速度环：直接设目标Vz，跳过位置环
                 pid_alt_vel.kp = 8.0f;  // 爬升段强P
@@ -401,12 +403,11 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
             land_time_s = 0.0f;
             takeoff_tof_grace_s = 0.0f;
 
-            // 定高阶段 TOF 长时间丢失，转降落保护
-//            if (tof_lost_time_s > ALT_TOF_LOST_FAILSAFE_S) {
-//                flight_state = ALT_LANDING;
-//                // hold_time_s = 0.0f;
-//                break;
-//            }
+            // 掉高保护：掉到目标以下太远 → 退回爬升
+            if (current_height_cm < ALT_HOLD_TARGET_CM - 50.0f) {
+                flight_state = ALT_TAKEOFF;
+                break;
+            }
 
             if (target_height_cm < ALT_HOLD_TARGET_CM) {
                 // target_height_cm += 16.0f * dt;         // 旧值：目标爬升偏快

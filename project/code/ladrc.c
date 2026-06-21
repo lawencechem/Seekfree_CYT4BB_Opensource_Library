@@ -37,6 +37,8 @@ static float ladrc_run(ladrc_axis_t *s, float target, float y,
     s->z1 += dt * (s->z2 + b0 * s->u_sat - 2.0f * wo * e);
     if (fabsf(u - s->u_sat) < 1.0f) {
         s->z2 += dt * (-wo * wo * e);
+    } else {
+        s->z2 *= 0.995f;  /* 饱和时缓慢泄放z2，防止锁死 */
     }
     return s->u_sat;
 }
