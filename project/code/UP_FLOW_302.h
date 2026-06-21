@@ -97,8 +97,8 @@
 #define FLOW_FULL_HEIGHT_CM         (15.0f)  // C1：45→30→15，配合更早接管
 #define FLOW_POS_KP                 (0.0f)
 #define FLOW_VEL_KP                 (0.0f)
-#define FLOW_VX_KI                  (0.00f)  /* 0.04→0：取消速度环I。I冻结到90cm且有泄漏，实际效果微弱，关掉简化。 */
-#define FLOW_VY_KI                  (0.00f)  /* 0.06→0：同X */
+#define FLOW_VX_KI                  (0.00f)  /* X轴不加I */
+#define FLOW_VY_KI                  (0.03f)  /* 0→0.03：小I消Y轴稳态漂移 */
 #define FLOW_VX_KD                  (0.00f)  // 0.02→0：D项放大了旋转补偿残留的假速度跳变，关掉排除
 #define FLOW_VY_KD                  (0.00f)  // 0.05→0.02→0：同上
 #define FLOW_VEL_LPF_ALPHA          (0.15f)  // 0.35→0.15，增强滤波压制高度放大的光流噪声
@@ -261,10 +261,12 @@ void Cam_Vel_Mock_Reset(void);
  *
  * 【分离设计】数据源(A) 和 外环(B) 分开：接真相机时只换 A(改成读共享内存+IMU去旋转)，
  *            外环 B 完全不动。*/
-#define CAM_POS_KP        (1.00f)   /* 0.90→1.00：用户参数，13cm误差→13cm/s→Vmax=16内 */
+#define CAM_POS_KP        (1.00f)   /* 位置环P */
+#define CAM_POS_KD        (0.15f)   /* 位置环D：d(err)/dt→速度阻尼，频率无关消耗摆动能量 */
+#define CAM_POS_D_LPF     (0.25f)   /* D项LPF(~4Hz截止)：滤摄像头50ms帧间像素跳变，保留摆锤频率 */
 #define CAM_FF_GAIN       (0.55f)
 #define CAM_FF_LPF_ALPHA  (1.00f)
-#define CAM_DEADBAND_CM   (4.0f)    /* 5→4：兼顾跟车响应和防小摆动 */
+#define CAM_DEADBAND_CM   (4.0f)
 #define V_FOLLOW_MAX      (35.0f)   /* 30→35：用户参数 */
 #define VCAR_MODE         (0)       /* 虚拟车运动：0=静止(阶跃测试，先飞这个)  1=正弦往返 */
 #define VCAR_STEP_X       (30.0f)   /* 静止模式：车固定在世界系 X=此值(cm)，飞机阶跃飞过去并停住(40→30 留线缆余量) */
