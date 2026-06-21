@@ -43,6 +43,7 @@
 #include "battery_comp.h"
 #include "UP_FLOW_302.h"
 #include "cam_share.h"
+#include "ladrc.h"
 #include "math.h"
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
@@ -152,15 +153,22 @@ volatile uint32_t sys_time_ms = 0; // 【定高调试】全局毫秒级时间戳
                         cam_latched = 1;
                         Up_Flow_302_PosHold_Prime();
                     }
-                    // 锁存后永不关
+                    // 锁存后：摄像头有效→跟车，丢锁→光流位置保持
                     if (cam_latched)
                     {
-                        Cam_Follow_Outer_Update(dt);
+                        if (cam_valid)
+                        {
+                            Cam_Follow_Outer_Update(dt);
+                        }
+                        else
+                        {
+                            // 摄像头丢锁→回退到光流位置保持（不依赖视觉，防y轴漂移）
+                            Up_Flow_302_PosHold_Update(dt);
+                        }
                     }
                     else
                     {
-                        upf_target_vx = 0.0f;
-                        upf_target_vy = 0.0f;
+                        Up_Flow_302_PosHold_Update(dt);
                     }
                 }
                 (void)follow_settle_s;
@@ -280,8 +288,10 @@ volatile uint32_t sys_time_ms = 0; // 【定高调试】全局毫秒级时间戳
                        "rx:%.1f ry:%.1f tvx:%.1f tvy:%.1f vx:%.2f vy:%.2f fx:%.1f fy:%.1f imx:%.1f imy:%.1f "
                        "fw:%.2f pc:%.2f rc:%.2f evx:%.1f evy:%.1f op:%.2f or:%.2f ivx:%.1f ivy:%.1f "
                        "ROL:%.1f PIT:%.1f "
-                       "TGTY:%.1f YR:%.1f YRC:%.1f YL:%.0f YI:%.1f cv:%d cx:%.1f cy:%.1f u:%d v:%d ar:%d mg:%d rx:%u "
-                       "PO:%.0f RO:%.0f YO:%.1f PR:%.1f RR:%.1f PD:%.2f RD:%.2f PC:%.1f RC:%.1f\r\n",
+                       "TGTY:%.1f YR:%.1f YRC:%.1f YL:%.0f YI:%.1f YA:%.1f cv:%d cx:%.1f cy:%.1f u:%d v:%d ar:%d mg:%d rx:%u "
+                       "PO:%.0f RO:%.0f YO:%.1f PR:%.1f RR:%.1f "
+                       "PRt:%.1f RRt:%.1f "
+                       "PC:%.1f RC:%.1f LPO:%.0f LRO:%.0f LYO:%.1f\r\n",
                        flow_active,
                        upf_data_valid,
                        upf_data_fresh,
@@ -313,6 +323,7 @@ volatile uint32_t sys_time_ms = 0; // 【定高调试】全局毫秒级时间戳
                        y_target_rate_dbg,      // YRC：目标偏航角速度
                        y_limited,              // YL：混控偏航量
                        pid_yaw_rate.integral,  // YI：偏航积分
+                       yaw_bias_adapt,         // YA：Yaw前馈值
                        cam_valid,              // cv：摄像头锁定
                        cam_dbg_x,              // cx：换算后X(cm)
                        cam_dbg_y,              // cy：换算后Y(cm)
@@ -324,12 +335,16 @@ volatile uint32_t sys_time_ms = 0; // 【定高调试】全局毫秒级时间戳
                        // PO/RO=内环最终混控值，YO=yaw限幅后输出，PR/RR=角度环目标角速度
                        p_out, r_out, y_limited,
                        p_target_rate, r_target_rate_dbg,
-                       // PD/RD：俯仰/横滚D项贡献（姿态环调试）
-                       pid_pitch_rate.kd * pid_pitch_rate.derivative,
-                       pid_roll_rate.kd  * pid_roll_rate.derivative,
-                       // PC/RC：俯仰/横滚倾斜补偿量（像素，评估补偿效果）
+                       // PRt/RRt：实测俯仰/横滚角速度（LADRC性能检视）
+                       dbg_pitch_rate_fb,
+                       dbg_roll_rate_fb,
+                       // PC/RC：俯仰/横滚倾斜补偿量（像素）
                        cam_dbg_pcomp,
-                       cam_dbg_rcomp);
+                       cam_dbg_rcomp,
+                       // LPO/LRO/LYO：三轴LADRC旁观输出（与PO/RO/YO对比调参）
+                       ladrc_dbg_lpo,
+                       ladrc_dbg_lro,
+                       ladrc_dbg_lyo);
             }
 
         }

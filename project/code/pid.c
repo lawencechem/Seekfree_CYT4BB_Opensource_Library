@@ -4,6 +4,7 @@
 #include "dl1b_altitude.h"
 #include "battery_comp.h"
 #include "UP_FLOW_302.h"
+#include "ladrc.h"
 PID_t pid_pitch_angle, pid_pitch_rate;
 PID_t pid_roll_angle, pid_roll_rate;
 PID_t pid_yaw_angle, pid_yaw_rate;
@@ -104,11 +105,11 @@ static const float yaw_thr_bp[YAW_FF_N] = {
 };
 
 static float yaw_bias_bp[YAW_FF_N] = {
-    110.0f, 112.0f, 114.0f, 116.0f, 117.0f, 118.0f, 120.0f
-};
+    85.0f, 86.0f, 87.0f, 88.0f, 89.0f, 90.0f, 91.0f
+};   /* 原110~120偏大→YI=-89，降~22%让YI≈0 */
 //};
 
-static float yaw_bias_filt = 110.0f;  //133.0 134  112
+static float yaw_bias_filt = 85.0f;
 
 #define MOTOR_MIN  3200   // 确保电机始终正转的最小油门
 #define MOTOR_MAX  9500  // 预留一点上限，防止电调饱和失步
@@ -118,7 +119,7 @@ static float yaw_bias_filt = 110.0f;  //133.0 134  112
 // 实验目的：关掉前馈后看 YAW 是"停在一个固定偏角"还是"继续慢慢转"——
 //   停住 → 前馈(随油门变)就是慢转元凶，下一步把航向交给积分自整定；
 //   继续转 → 存在真实大力矩，需要给积分足够授权去吃掉它。
-#define YAW_FF_ENABLE (0)
+#define YAW_FF_ENABLE (1)
 // 偏航航向锁定开关：1=正常锁航向(外环+内环)  0=路A诊断(关外环，只做角速度阻尼)
 #define YAW_HEADING_HOLD   (1)
 // ==================== 起飞保护流程参数 ====================
@@ -230,9 +231,17 @@ float Yaw_Bias_By_Throttle(float comp_throttle)
     return yaw_bias_adapt;
 }
 
+/* ==================== 角速度环 LADRC（定义在Attitude_PID_History_Reset之前） ====================
+ * 一阶 LADRC 替代 PID_Compute_Rate。
+ * ESO 在线估计角加速度扰动并主动抵消。
+ * 三轴参数独立（Pitch/Roll/Yaw），来自各轴 PID 反映的物理差异。
+ */
+/* LADRC 旁观标志（在 dl1b_altitude.c HOLD 切入时置 1，仅记录状态） */
+uint8_t ladrc_active = 0;
+
 /**
  * @brief 清空姿态 PID 历史项
- * @note 起飞预转/落地/保护时调用，避免飞机还被地面支撑时 PID 积分“憋劲”。
+ * @note 起飞预转/落地/保护时调用，避免飞机还被地面支撑时 PID 积分”憋劲”。
  */
 static void Attitude_PID_History_Reset(void)
 {
@@ -251,6 +260,8 @@ static void Attitude_PID_History_Reset(void)
     pid_pitch_rate.derivative = 0.0f;
     pid_roll_rate.derivative  = 0.0f;
     pid_yaw_rate.derivative   = 0.0f;
+
+    ladrc_reset();
 }
 
 /**
@@ -357,7 +368,7 @@ void PID_Params_Init(void)
     pid_yaw_rate.ki = 0.10f; // 0.20→0.10，减半积分防windup振荡
     pid_yaw_rate.kd = 0.0f;
     pid_yaw_rate.i_limit = 100.0f; // 200→100，YI限幅收紧，防持续积累
-    pid_yaw_rate.out_limit = 520.0f;
+    pid_yaw_rate.out_limit = 400.0f;  /* 520→400：给前馈留120余量。PID+前馈不超过520，anti-windup正确生效 */
     pid_yaw_rate.d_lpf_alpha = 1.0f;
 }
 
@@ -413,9 +424,13 @@ float PID_Compute_Rate(PID_t *pid, float target, float current, float dt)
 /**
  * @brief 专为 YAW 轴内环定制的 PID (移除了积分分离障碍)
  */
-float PID_Compute_Yaw_Rate(PID_t *pid, float target, float current, float dt) 
+float PID_Compute_Yaw_Rate(PID_t *pid, float target, float current, float dt)
 {
     pid->error = target - current;
+
+    // ★ 积分泄漏(×0.9997@500Hz→τ≈7s)：防止YI缓慢累积到饱和，
+    //   又保留对抗持续偏置的能力（FF扛主力119，I只作微调）。
+    pid->integral *= 0.9997f;
 
     // Yaw anti-windup：输出饱和且误差同向时停止加深积分
     float i_candidate = pid->integral;
@@ -472,7 +487,7 @@ float dbg_yaw_takeoff_weight = 1.0f;
 // 温漂陀螺零偏重校准（定义在文件末尾，前向声明供 Motor_Control_Mixing 调用）
 void Gyro_Bias_Recalibrate_2ms(int16 gx, int16 gy, int16 gz, float throttle);
 
-void Motor_Control_Mixing(float throttle) 
+void Motor_Control_Mixing(float throttle)
 {
     static uint16_t boot_timer = 0;
     static uint16_t takeoff_elapsed_ms = 0;
@@ -670,8 +685,9 @@ void Motor_Control_Mixing(float throttle)
     p_target_rate = PID_Compute_Angle(&pid_pitch_angle, pitch_target, current_euler.pitch, 0.002f);
     
     // 二次保险限幅，防止后续调参时 out_limit 被改大又把机体打崩
-    p_target_rate = f_limit(p_target_rate, -60.0f, 60.0f);  // 90→60：回退
+    p_target_rate = f_limit(p_target_rate, -60.0f, 60.0f);
     p_out = PID_Compute_Rate(&pid_pitch_rate, p_target_rate, p_rate_fb, 0.002f);
+    ladrc_observe_pitch(p_target_rate, p_rate_fb, 0.002f);  /* LADRC 旁观 */
 
     roll_target = roll_zero_offset
                 + roll_flight_trim * final_trim_blend;
@@ -679,8 +695,9 @@ void Motor_Control_Mixing(float throttle)
     roll_target += upf_roll_corr;  //加上光流修正
 #endif
     r_target_rate_dbg = PID_Compute_Angle(&pid_roll_angle, roll_target, current_euler.roll, 0.002f);
-    r_target_rate_dbg = f_limit(r_target_rate_dbg, -60.0f, 60.0f);  // 90→60：回退
+    r_target_rate_dbg = f_limit(r_target_rate_dbg, -60.0f, 60.0f);
     r_out = PID_Compute_Rate(&pid_roll_rate, r_target_rate_dbg, r_rate_fb, 0.002f);
+    ladrc_observe_roll(r_target_rate_dbg, r_rate_fb, 0.002f);  /* LADRC 旁观 */
 
 #if YAW_HEADING_HOLD
     // 正常模式：航向外环 → 目标偏航角速度
@@ -703,7 +720,9 @@ void Motor_Control_Mixing(float throttle)
         yaw_i_enable = 1;
     }
 
+    /* yaw 角速度环：PID 控制 */
     y_out = PID_Compute_Yaw_Rate(&pid_yaw_rate, y_target_rate_dbg, y_rate_fb, 0.002f);
+    ladrc_observe_yaw(y_target_rate_dbg, y_rate_fb, 0.002f);  /* LADRC 旁观 */
 
     /* ---- Yaw 故障检测（借鉴MaplePilot/无名飞控） ----
      * yaw PID输出大(>一半限幅)但实测yaw速率小(<30deg/s)持续2秒，
@@ -714,7 +733,7 @@ void Motor_Control_Mixing(float throttle)
         if (fabsf(y_out) > yaw_out_half && fabsf(y_rate_fb) < 30.0f)
         {
             yaw_stall_cnt++;
-            if (yaw_stall_cnt > 250U)   // 0.5s @ 500Hz（原1000U→2s太长了，卡住时机体偏航已不可接受）
+            if (yaw_stall_cnt > 790U)   // 1.58s @ 500Hz（折中：给I积累时间，又保留故障检测）
             {
                 pid_yaw_rate.integral = 0.0f;
                 target_yaw = current_euler.yaw;

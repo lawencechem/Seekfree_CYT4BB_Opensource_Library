@@ -128,9 +128,10 @@ void Cam_IPC_Process(float height_cm)
         float tilt_v = CAM_FOCAL_PX * tanf(pitch_rad);
         cam_dbg_rcomp = tilt_u;
         cam_dbg_pcomp = tilt_v;
-        /* 右倾(ROLL+)→目标在画面左移(u更负)，补偿需加回tilt_u拉回中心。
-         * pitch不存在此问题：抬头(PITCH+)→目标下移(v+)→减tilt_v=正确方向。 */
-        float comp_u = (float)px_u + tilt_u;
+        /* 实测数据验证：右倾(ROL+)时u增大(目标偏右)，减tilt_u使u回中。
+         * 抬头(PIT+)时v增大(目标偏下)，减tilt_v使v回中。
+         * 两轴都用减号，数据验证有效。 */
+        float comp_u = (float)px_u - tilt_u;
         float comp_v = (float)px_v - tilt_v;
     #if CAM_SWAP_UV
         float px_fwd = comp_u;
@@ -431,6 +432,11 @@ void Up_Flow_302_Init(void)
     pid_upf_vy.integral = 0.0f;
     pid_upf_vy.last_error = 0.0f;
     pid_upf_vy.d_lpf_alpha = 0.25f;
+
+#if FLOW_USE_LADRC
+    ladrc_x.z1 = 0.0f; ladrc_x.z2 = 0.0f; ladrc_x.u_sat = 0.0f;
+    ladrc_y.z1 = 0.0f; ladrc_y.z2 = 0.0f; ladrc_y.u_sat = 0.0f;
+#endif
 }
 
 
@@ -799,16 +805,21 @@ void Cam_Pos_Mock_Update(float dt)
     cam_valid = 1;
 }
 
-/* (B) 跟随外环：相对坐标(误差) → 期望速度。
- * P + 前馈(FF)：P快速回应，FF响应偏移变化率，线猛拉时提前出力。
- * 死区±4cm内不修正，FF用差分+LPF防摄像头抖动噪声。
- * @param dt 调用周期(秒)
+/* (B) 跟随外环（P + 前馈）：相对坐标(误差) → 期望速度。
+ *
+ *  cx/cy 已经过仰角补偿，位置测量不包含姿态耦合。
+ *  绳子只影响姿态和速度（物理层面），不影响位置测量。
+ *  所以位置环不需要 LPF/陷波——它看到的误差就是真实的相对位置。
+ *
+ *  P(0.90)：直接响应位置误差，回归目标。
+ *  FF(0.55)：误差变化率→速度偏置，车突然转向时预判响应。
+ *  速度环FLOW_VX_KP=0.50：提供实时阻尼，频率无关。
  */
 void Cam_Follow_Outer_Update(float dt)
 {
     static float last_ex = 0.0f, last_ey = 0.0f;
     static float ff_x = 0.0f, ff_y = 0.0f;
-    
+
     if (!cam_valid)
     {
         upf_target_vx = 0.0f;
@@ -818,19 +829,19 @@ void Cam_Follow_Outer_Update(float dt)
         return;
     }
 
-    /* 轴映射：摄像头X→光流Y负、摄像头Y→光流X正（用户实测确认） */
+    /* 轴映射：摄像头X→光流Y负、摄像头Y→光流X正 */
     float err_x =  cam_rel_y;
     float err_y = -cam_rel_x;
     if (fabsf(err_x) < CAM_DEADBAND_CM) err_x = 0.0f;
     if (fabsf(err_y) < CAM_DEADBAND_CM) err_y = 0.0f;
-    
-    // 前馈：误差变化率 → 速度补偿（差分+LPF防抖）
+
+    /* 前馈：err变化率 → 速度偏置 */
     float raw_ff_x = (err_x - last_ex) / dt;
     float raw_ff_y = (err_y - last_ey) / dt;
     last_ex = err_x; last_ey = err_y;
-    ff_x += 0.2f * (raw_ff_x * CAM_FF_GAIN - ff_x);  // LPF alpha=0.2
-    ff_y += 0.2f * (raw_ff_y * CAM_FF_GAIN - ff_y);
-    
+    ff_x += CAM_FF_LPF_ALPHA * (raw_ff_x * CAM_FF_GAIN - ff_x);
+    ff_y += CAM_FF_LPF_ALPHA * (raw_ff_y * CAM_FF_GAIN - ff_y);
+
     float vx_des = CAM_POS_KP * err_x + ff_x;
     float vy_des = CAM_POS_KP * err_y + ff_y;
     upf_target_vx = f_limit(vx_des, -V_FOLLOW_MAX, V_FOLLOW_MAX);
@@ -883,6 +894,50 @@ void Up_Flow_302_PosHold_Reset(void)
     cam_rel_y = 0.0f;
 }
 
+/* ==================== LADRC 一阶自抗扰控制器 ====================
+ *
+ * 一阶系统模型：v_dot = b0 * u + f
+ *   v = 速度(cm/s), u = 角度指令(°), f = 总扰动(绳拉力/风等, cm/s²)
+ *
+ * ESO(扩张状态观测器) 离散化(前向欧拉 @ 100Hz)：
+ *   e = z1 - y
+ *   z1 += dt * (z2 + b0*u_sat - 2*wo*e)
+ *   z2 += dt * (-wo²*e)
+ *   z1→估计速度, z2→估计总扰动
+ *
+ * 控制律：u = (wc*(target - z1) - z2) / b0
+ *   第一部分：PD反馈(追目标)，第二部分：前馈补偿(抵消扰动)
+ *
+ * 相比纯P：
+ *   纯P：out = KP*(target-v) → 需要等v因扰动变化后才出力 → 滞后
+ *   LADRC：z2在线估计扰动 → u = (-z2)/b0 直接抵消 → 不等待
+ */
+#if FLOW_USE_LADRC
+typedef struct {
+    float z1;       /* 估计速度 (cm/s) */
+    float z2;       /* 估计总扰动 (cm/s²) */
+    float u_sat;    /* 上次饱和输出 (°) */
+} ladrc_axis_t;
+
+static ladrc_axis_t ladrc_x = {0, 0, 0};
+static ladrc_axis_t ladrc_y = {0, 0, 0};
+
+/* LADRC 单轴更新 (dt 单位: 秒, limit 单位: °) */
+static float ladrc_update(ladrc_axis_t *s, float target, float y, float dt, float limit)
+{
+    /* ESO 观测误差 */
+    float e = s->z1 - y;
+    /* ESO 更新（用上次饱和后的输出，避免 windup） */
+    s->z1 += dt * (s->z2 + LADRC_B0 * s->u_sat - 2.0f * LADRC_WO * e);
+    s->z2 += dt * (-LADRC_WO * LADRC_WO * e);
+    /* 控制律：误差反馈 + 扰动前馈补偿 */
+    float u = (LADRC_WC * (target - s->z1) - s->z2) / LADRC_B0;
+    /* 限幅并保存（下次 ESO 用 u_sat） */
+    s->u_sat = f_limit(u, -limit, limit);
+    return s->u_sat;
+}
+#endif /* FLOW_USE_LADRC */
+
 /* ==================== Up_Flow_302_Speed_Damp ==================== */
 void Up_Flow_302_Speed_Damp(float dt, float *pitch_corr, float *roll_corr)
 {
@@ -892,8 +947,18 @@ void Up_Flow_302_Speed_Damp(float dt, float *pitch_corr, float *roll_corr)
 
     if (!upf_data_fresh)
     {
+    #if FLOW_USE_LADRC
+        /* LADRC：z1跟随当前速度，恢复时无跳变；z2保留（扰动估计不突变） */
+        float vel_x = UPF_USE_IMU_FUSION ? upf_fused_vx : upf_vel_x;
+        float vel_y = UPF_USE_IMU_FUSION ? upf_fused_vy : upf_vel_y;
+        ladrc_x.z1 = vel_x;
+        ladrc_y.z1 = vel_y;
+        ladrc_x.u_sat = 0.0f;
+        ladrc_y.u_sat = 0.0f;
+    #else
         upf_pitch_corr = 0.0f;
         upf_roll_corr = 0.0f;
+    #endif
         return;
     }
 
@@ -905,48 +970,51 @@ void Up_Flow_302_Speed_Damp(float dt, float *pitch_corr, float *roll_corr)
     float vel_x = upf_vel_x;
     float vel_y = upf_vel_y;
 #endif
+
+#if FLOW_USE_LADRC
+    /* ========== LADRC 速度环（保守参数：wc=2, wo=12, b0=15） ========== */
+    float out_pitch = ladrc_update(&ladrc_x, upf_target_vx, vel_x, dt, UPF_ANGLE_LIMIT);
+    float out_roll  = ladrc_update(&ladrc_y, upf_target_vy, vel_y, dt, UPF_ANGLE_LIMIT);
+
+    /* 调试变量：误差 ≈ (target - z1) 的缩放，用于观测跟踪效果 */
+    upf_dbg_err_vx = upf_target_vx - ladrc_x.z1;
+    upf_dbg_err_vy = upf_target_vy - ladrc_y.z1;
+    upf_dbg_raw_out_pitch = out_pitch;
+    upf_dbg_raw_out_roll  = out_roll;
+#else
+    /* ========== 原 PID 速度环（回退路径） ========== */
     float err_vx = upf_target_vx - vel_x;
     float err_vy = upf_target_vy - vel_y;
-    /* 死区作用在"误差"上：离期望速度很近就不修正，避免抖动
-     * （target=0 时，等价于原来的 |v| < 死区 不修正）。 */
     if (fabsf(err_vx) < FLOW_VEL_DEADBAND_CM_S) err_vx = 0.0f;
     if (fabsf(err_vy) < FLOW_VEL_DEADBAND_CM_S) err_vy = 0.0f;
 
-    /* 积分分离 + 爬升冻结：大误差/Vz过大/没到目标高度时停止累积积分
-     * 爬到目标高度前冻结I：爬升光流残留旋转→假误差→I累积→饱和→振荡
-     * 冻结合I后P/D仍在工作（快速响应真漂移），但I不累积假误差。*/
     uint8_t near_target = (fabsf(current_height_cm) >= UPF_I_FREEZE_UNTIL_CM) ? 1U : 0U;
     uint8_t integral_frozen = !near_target || (fabsf(current_speed_z) > UPF_CLIMB_VZ_THRESHOLD) ? 1U : 0U;
 
     if (!integral_frozen && fabsf(err_vx) < UPF_INT_ERR_GATE_CMS)
     {
-        pid_upf_vx.integral *= 0.99f;        // 泄漏积分：只记近期速度
+        pid_upf_vx.integral *= 0.99f;
         pid_upf_vx.integral += err_vx * dt;
-        pid_upf_vx.integral = f_limit(pid_upf_vx.integral,
-                                      -pid_upf_vx.i_limit, pid_upf_vx.i_limit);
+        pid_upf_vx.integral = f_limit(pid_upf_vx.integral, -pid_upf_vx.i_limit, pid_upf_vx.i_limit);
     }
     if (!integral_frozen && fabsf(err_vy) < UPF_INT_ERR_GATE_CMS)
     {
-        pid_upf_vy.integral *= 0.99f;        // 泄漏积分：只记近期速度
+        pid_upf_vy.integral *= 0.99f;
         pid_upf_vy.integral += err_vy * dt;
-        pid_upf_vy.integral = f_limit(pid_upf_vy.integral,
-                                      -pid_upf_vy.i_limit, pid_upf_vy.i_limit);
+        pid_upf_vy.integral = f_limit(pid_upf_vy.integral, -pid_upf_vy.i_limit, pid_upf_vy.i_limit);
     }
 
     upf_dbg_err_vx = err_vx;
     upf_dbg_err_vy = err_vy;
 
-    // 微分项（误差变化率，带低通滤波）
     float raw_dvx = (err_vx - pid_upf_vx.last_error) / dt;
     pid_upf_vx.last_error = err_vx;
-    pid_upf_vx.derivative = pid_upf_vx.last_derivative
-                          + pid_upf_vx.d_lpf_alpha * (raw_dvx - pid_upf_vx.last_derivative);
+    pid_upf_vx.derivative = pid_upf_vx.last_derivative + pid_upf_vx.d_lpf_alpha * (raw_dvx - pid_upf_vx.last_derivative);
     pid_upf_vx.last_derivative = pid_upf_vx.derivative;
 
     float raw_dvy = (err_vy - pid_upf_vy.last_error) / dt;
     pid_upf_vy.last_error = err_vy;
-    pid_upf_vy.derivative = pid_upf_vy.last_derivative
-                          + pid_upf_vy.d_lpf_alpha * (raw_dvy - pid_upf_vy.last_derivative);
+    pid_upf_vy.derivative = pid_upf_vy.last_derivative + pid_upf_vy.d_lpf_alpha * (raw_dvy - pid_upf_vy.last_derivative);
     pid_upf_vy.last_derivative = pid_upf_vy.derivative;
 
     float out_pitch = pid_upf_vx.kp * err_vx + pid_upf_vx.ki * pid_upf_vx.integral + pid_upf_vx.kd * pid_upf_vx.derivative;
@@ -957,6 +1025,7 @@ void Up_Flow_302_Speed_Damp(float dt, float *pitch_corr, float *roll_corr)
 
     upf_dbg_raw_out_pitch = out_pitch;
     upf_dbg_raw_out_roll  = out_roll;
+#endif /* FLOW_USE_LADRC */
 
     *pitch_corr = UPF_CTRL_PITCH_SIGN * out_pitch;
     *roll_corr  = UPF_CTRL_ROLL_SIGN  * out_roll;
@@ -1032,6 +1101,11 @@ void Up_Flow_302_Reset(void)
     pid_upf_vy.integral = 0.0f;
     pid_upf_vy.last_error = 0.0f;
     pid_upf_vy.d_lpf_alpha = 0.25f;
+
+#if FLOW_USE_LADRC
+    ladrc_x.z1 = 0.0f; ladrc_x.z2 = 0.0f; ladrc_x.u_sat = 0.0f;
+    ladrc_y.z1 = 0.0f; ladrc_y.z2 = 0.0f; ladrc_y.u_sat = 0.0f;
+#endif
 
     /* C2：位置保持位移估计也清零，落地/急停后下次以新点为原点 */
     poshold_x = 0.0f;

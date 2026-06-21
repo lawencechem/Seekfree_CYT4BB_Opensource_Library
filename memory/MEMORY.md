@@ -1,0 +1,1 @@
+- [Car-following requirements](car-following-requirements.md) — drone must actively follow a moving car, fast response + continuous parameter optimization

@@ -55,7 +55,7 @@ extern float dbg_batt_delta;       // 电压补偿增加的油门量
 #define CLIMB_DOWN_MAX_SPEED -30.0f // 原来 -45，先降到 -30
 
 // 自动任务目标：悬停高度与保持时间
-#define ALT_HOLD_TARGET_CM   120.0f  // 定高/跟车目标：1.2m
+#define ALT_HOLD_TARGET_CM   100.0f  // 定高目标
 #define ALT_HOLD_TIME_S      999.0f
 #define ALT_HOLD_BAND_CM     5.0f    // 原来 8，先收紧一点
 

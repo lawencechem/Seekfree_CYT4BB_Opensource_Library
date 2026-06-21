@@ -102,7 +102,7 @@
 #define FLOW_VX_KD                  (0.00f)  // 0.02→0：D项放大了旋转补偿残留的假速度跳变，关掉排除
 #define FLOW_VY_KD                  (0.00f)  // 0.05→0.02→0：同上
 #define FLOW_VEL_LPF_ALPHA          (0.15f)  // 0.35→0.15，增强滤波压制高度放大的光流噪声
-#define FLOW_MAX_ANGLE_DEG          (12.0f)  // 18→12：手拿测试数据无效，回退原值
+#define FLOW_MAX_ANGLE_DEG          (12.0f)  /* 15→12：实测15°振动更大，相位滞后导致更多能量注入，回退 */
 #define FLOW_VEL_DEADBAND_CM_S      (2.0f)   // 5→2。有旋转补偿了，死区不用那么大
 #define FLOW_VEL_SCALE              (0.25f)  // 0.5→0.25：假速度随高度放大，降SCALE等效降假速度。
                                              // 同时提升Kp补回真实响应，让系统在高高度也能稳
@@ -120,8 +120,8 @@
 #define UPF_ACC_LSB_TO_CMS2         (0.0598f) // ±2g量程：16384LSB/g → cm/s²/LSB
 #define UPF_G_CMS2                  (980.665f) // 重力加速度 cm/s²
 
-#define FLOW_VX_KP                  (0.50f)  // 0.70→0.50：降速环X轴P
-#define FLOW_VY_KP                  (0.64f)  // 0.84→0.64：降速环Y轴P
+#define FLOW_VX_KP                  (0.50f)  /* 0.60→0.50：复原用户原值，速度环轻阻尼，位置环主控 */
+#define FLOW_VY_KP                  (0.64f)  /* 0.72→0.64：复原用户原值，同X轴 */
 
 /* ==================== C2：起飞/悬停位置保持外环（目标=起飞点原点）====================
  * 把滤波后的光流速度积分成"相对起飞点位移"，外环 P 把它拉回 0，输出期望速度喂给上面的速度环。
@@ -131,7 +131,7 @@
  *   - 漏积分(leak)：每步乘 POSHOLD_LEAK(<1)，限制蓝布噪声的随机游走累积；
  *   - 位置估计限幅 ±POSHOLD_MAX_CM，避免单帧尖刺把目标速度顶满。
  * 接真摄像头时：这套"自积分定点"换成相机直接给的相对位置即可，外环结构不变。*/
-#define POSHOLD_KP                  (0.0f)    /* 1.0→0：光流只负责速度环，位置环交给摄像头 */
+#define POSHOLD_KP                  (0.5f)    /* 0→0.5：摄像头丢锁时回退到光流位置保持，防Y轴漂移 */
 
 #define POSHOLD_V_MAX               (12.0f)   /* 回拉期望速度限幅 (cm/s)，与拴绳空间匹配 */
 #define POSHOLD_LEAK                (0.997f)  /* 漏积分系数(每 ~10ms)，<1 防随机游走；越小忘得越快、定点越松 */
@@ -194,6 +194,19 @@
 /* IMU660RA 陀螺仪原始 LSB → rad/s：raw × 0.061 dps/LSB ÷ 57.2958 = raw × 0.001065 */
 #define UPF_GYRO_LSB_TO_RAD_S       (0.001065f)
 
+/* ==================== LADRC速度环（替代PI，保守稳定）====================
+ * 一阶LADRC：ESO在线估计系绳拉力等外力扰动，主动抵消而不是等误差积累。
+ * b0 是粗略增益估计（cm/s² 每度倾角），LADRC 对 b0 偏差 50% 仍然稳定。
+ * wc 控制器带宽，wo 观测器带宽（一般 3~10×wc）。wo 越大估计越快但噪声敏感。
+ * 保守参数：wc=2.0(慢速)，wo=12.0(覆盖0.5~2Hz绳频)，b0=15(大致估算)
+ */
+#define FLOW_USE_LADRC          (0)     /* 0=原PID(速度环不动)，角速度环LADRC在pid.c中 */
+#if FLOW_USE_LADRC
+#define LADRC_WC                (2.0f)  /* 控制器带宽(rad/s) → ~0.3Hz闭环 */
+#define LADRC_WO                (12.0f) /* 观测器带宽(rad/s) → 覆盖系绳频段 */
+#define LADRC_B0                (15.0f) /* 增益估计(cm/s²/deg)：倾斜1°→约15cm/s²水平加速 */
+#endif
+
 /* ==================== 控制器约束 ==================== */
 #define UPF_ANGLE_LIMIT             (FLOW_MAX_ANGLE_DEG)      /* 修正角限幅（度） */
 #define UPF_INT_ERR_GATE_CMS        (120.0f)    /* 积分分离门限 */
@@ -248,10 +261,11 @@ void Cam_Vel_Mock_Reset(void);
  *
  * 【分离设计】数据源(A) 和 外环(B) 分开：接真相机时只换 A(改成读共享内存+IMU去旋转)，
  *            外环 B 完全不动。*/
-#define CAM_POS_KP        (1.0f)    /* 0.60→1.0：要有明显收敛趋势，速度环刚好不饱和 */
-#define CAM_FF_GAIN       (0.40f)   /* 前馈增益：偏移变化率→速度补偿，快速响应线猛拉 */
-#define CAM_DEADBAND_CM   (4.0f)    /* 死区±4cm(~8pixel)，小偏移不出命令，电机安静不抖动 */
-#define V_FOLLOW_MAX      (12.0f)   /* 6→12：要给速度环足够的指令追上线 */
+#define CAM_POS_KP        (1.00f)   /* 0.90→1.00：用户参数，13cm误差→13cm/s→Vmax=16内 */
+#define CAM_FF_GAIN       (0.55f)
+#define CAM_FF_LPF_ALPHA  (1.00f)
+#define CAM_DEADBAND_CM   (4.0f)    /* 5→4：兼顾跟车响应和防小摆动 */
+#define V_FOLLOW_MAX      (35.0f)   /* 30→35：用户参数 */
 #define VCAR_MODE         (0)       /* 虚拟车运动：0=静止(阶跃测试，先飞这个)  1=正弦往返 */
 #define VCAR_STEP_X       (30.0f)   /* 静止模式：车固定在世界系 X=此值(cm)，飞机阶跃飞过去并停住(40→30 留线缆余量) */
 #define VCAR_SINE_AMP     (30.0f)   /* 正弦模式：幅度(cm)(50→30 留线缆余量) */

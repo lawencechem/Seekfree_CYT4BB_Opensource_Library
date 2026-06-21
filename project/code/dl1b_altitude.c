@@ -39,16 +39,14 @@ static float takeoff_throttle = THR_MOTOR_START;
 void Altitude_System_Init(void)
 {
     // 位置环：高度差 → 期望速度，只要 P
-    pid_alt_pos.kp = 0.60f;  //0.55
+    pid_alt_pos.kp = 0.80f;  // 0.60→0.80：更强回归力
     pid_alt_pos.ki = 0.0f;
     pid_alt_pos.kd = 0.0f;
-    pid_alt_pos.out_limit = CLIMB_UP_MAX_SPEED;  // 定高段=12
+    pid_alt_pos.out_limit = 20.0f;  // 12→20：净爬升力更大
 
-    // 速度环：速度差 → 油门补偿，I 负责自动学习悬停油门
-    // pid_alt_vel.kp = 5.2f;  // 旧值：刹车偏软
-    // pid_alt_vel.ki = 0.24f; // 旧值：积分偏强，容易把悬停点学高
-    pid_alt_vel.kp = 7.5f;        // 定高段原始P
-    pid_alt_vel.ki = 0.16f; 
+    // 速度环：速度差 → 油门补偿
+    pid_alt_vel.kp = 5.5f;        // 7.5→5.5：降速环P减少Vz振荡→油门泵动耦合
+    pid_alt_vel.ki = 0.18f;       // 0.16→0.18：I稍强
     pid_alt_vel.kd = 0.0f;   // DL1B 单传感器严禁加 D
     // pid_alt_vel.i_limit  = 220.0f;  // 旧值
     // pid_alt_vel.out_limit = 500.0f; // 旧值
@@ -183,7 +181,7 @@ static void Altitude_PID_Compute(float dt, uint8_t tof_has_new)
     pid_alt_vel.error = target_vel - current_speed_z;
     dbg_vel_err = pid_alt_vel.error;
     
-    //积分泄放（τ≈10s：在典型30-60s飞行内I能收敛到稳态值）
+    //积分泄放（τ≈10s）
     pid_alt_vel.integral *= 0.9990f;
 
     // 积分分离：仅靠近目标高度(±15cm)且有新TOF数据且速度误差不大时才积分
@@ -249,23 +247,8 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
         tof_dt_acc = 0.0f;
         tof_lost_time_s = 0.0f;
     } else {
-        // ★ 帧间用加速度计辅助估计Vz（消除纯衰减的锯齿波）
-        // 无新帧时 Vz = 前值 + ∫a_z dt - 轻微泄放防漂移
-        // 相比纯指数衰减(0.98/10ms→-3dB/0.35s)，加入加速度积分后
-        // Vz 在帧间保持物理一致性，速度环看到的是连续信号而非锯齿
-        {
-            float az_lsb = (float)filtered_data.accel.imu660ra_acc_z;
-            // IMU660RA 加速度计 ±8g: 4096 LSB/g → 0.2394 cm/s²/LSB
-            const float ACC_VZ_SCALE = 980.665f / 4096.0f;
-            float az_body_cms2 = az_lsb * ACC_VZ_SCALE;
-            // 体轴Z → 世界系垂直加速度（减重力）
-            float cp = cosf(current_euler.pitch * 0.01745329f);
-            float cr = cosf(current_euler.roll  * 0.01745329f);
-            float az_world = az_body_cms2 * cp * cr - 980.665f;
-            // 积分+泄放：加速度积分补速度变化，泄放防零偏漂移
-            current_speed_z += az_world * dt;
-            current_speed_z *= 0.985f;  // 轻微衰减滤除残余噪声
-        }
+        // 无新数据时速度衰减（不用加速度计——电机振动污染信号）
+        current_speed_z *= 0.97f;
         if (fabsf(current_speed_z) < 0.5f) current_speed_z = 0.0f;
         tof_lost_time_s += dt;
     }
@@ -294,6 +277,7 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
             target_height_cm = 0.0f;     // 每次重新起飞前清空目标高度，避免沿用上一次 Htar
             takeoff_throttle = THR_MOTOR_START;
             pid_alt_vel.integral = 0;
+            ladrc_active = 0;            // 落地复位LADRC，下次起飞从原PID开始
             break;
 
         // ── 起飞：电机预转 → Vz速度PID恒定爬升 → 到目标附近切定高 ───
@@ -363,7 +347,7 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
             // 第二段：纯Vz速度环爬升（不跑位置环，防与定高段冲突）
             {
                 // 软启动：目标Vz从0渐变到5cm/s
-                soft_climb_target += 0.5f * dt;
+                soft_climb_target += 1.0f * dt;
                 if (soft_climb_target > 5.0f) soft_climb_target = 5.0f;
 
                 // 只跑速度环：直接设目标Vz，跳过位置环
@@ -405,7 +389,8 @@ void Altitude_Control_Task(float dt, uint8 tof_has_new)
             if (tof_has_new && current_height_cm > ALT_HOLD_TARGET_CM - 10.0f)
             {
                 flight_state = ALT_HOLD;
-                pid_alt_vel.kp = 7.5f;        // 恢复原始P
+                pid_alt_vel.kp = 7.5f;        // 切HOLD（与Init一致，共用同一个速度环）
+                ladrc_active = 1;             // ★切到HOLD后启用LADRC角速度环
                 target_height_cm = current_height_cm;  // 从当前高度开始平滑爬升
                 takeoff_tof_grace_s = 0.0f;
             }
