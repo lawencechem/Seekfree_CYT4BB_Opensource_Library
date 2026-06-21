@@ -817,6 +817,8 @@ void Cam_Follow_Outer_Update(float dt)
     static float last_ex = 0.0f, last_ey = 0.0f;
     static float ff_x = 0.0f, ff_y = 0.0f;
     static float d_lpf_x = 0.0f, d_lpf_y = 0.0f;
+    static float frame_last_ex = 0.0f, frame_last_ey = 0.0f;  /* 上一帧误差（仅帧更新时刷新） */
+    static float frame_dt = 0.05f;                              /* 帧间隔估计(秒) */
 
     if (!cam_valid)
     {
@@ -825,6 +827,7 @@ void Cam_Follow_Outer_Update(float dt)
         last_ex = 0.0f; last_ey = 0.0f;
         ff_x = 0.0f; ff_y = 0.0f;
         d_lpf_x = 0.0f; d_lpf_y = 0.0f;
+        frame_dt = 0.05f;
         return;
     }
 
@@ -834,12 +837,21 @@ void Cam_Follow_Outer_Update(float dt)
     if (fabsf(err_x) < CAM_DEADBAND_CM) err_x = 0.0f;
     if (fabsf(err_y) < CAM_DEADBAND_CM) err_y = 0.0f;
 
-    /* 微分（D和FF共用） */
-    float deriv_x = (err_x - last_ex) / dt;
-    float deriv_y = (err_y - last_ey) / dt;
+    /* ★ 微分：只在帧更新时计算，用真实帧间隔除
+     *    帧间 err 不变时 deriv=0，不会产生 20Hz 脉冲 */
+    float deriv_x = 0.0f, deriv_y = 0.0f;
+    float err_dx = err_x - last_ex;
+    float err_dy = err_y - last_ey;
+    if (fabsf(err_dx) > 0.01f || fabsf(err_dy) > 0.01f) {
+        frame_dt += 0.5f * (dt * 5.0f - frame_dt);  /* 平滑估计帧间隔(~50ms) */
+        deriv_x = (err_x - frame_last_ex) / frame_dt;
+        deriv_y = (err_y - frame_last_ey) / frame_dt;
+        frame_last_ex = err_x;
+        frame_last_ey = err_y;
+    }
     last_ex = err_x; last_ey = err_y;
 
-    /* D：误差变化率→速度阻尼，带LPF滤像素噪声 */
+    /* D：误差变化率→速度阻尼 */
     d_lpf_x += CAM_POS_D_LPF * (deriv_x - d_lpf_x);
     d_lpf_y += CAM_POS_D_LPF * (deriv_y - d_lpf_y);
     float d_x = CAM_POS_KD * d_lpf_x;
